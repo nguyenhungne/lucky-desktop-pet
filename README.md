@@ -21,6 +21,15 @@ A plush-looking Husky that lives on top of your Windows taskbar. Lucky walks, na
 | 🎮 **Stays out of the way** | Hides while a full-screen app or game is in the foreground |
 | 📏 **Three sizes** | Nhỏ / Vừa / Lớn |
 
+## Idle game 🏆
+
+| | |
+|---|---|
+| ⭐ **Levels & XP** | Pet +3, fetch +12, treat +8, finished focus session +40, water reminder +3, and +1 per minute while you're using the PC. Each level-up pays 20 × level coins, with a sparkle burst |
+| 🪙 **Lucky coins** | Passive income every active minute (1 + 0.2 × level, plus upgrades). **Offline earnings**: 50 % of the rate while Lucky was closed, capped at 8 h |
+| 🛍️ **Shop** | Tray menu → *Cửa hàng & cấp độ*, or double-click the tray icon. **Accessories** (worn on the sprite, following every pose): aqua / navy / silver scarves, pink bow, beanie, party hat, sunglasses (Lv 3), silver crown (Lv 10). **Upgrades**: silver bowl, comfy bed, wooden house (+coins per minute), glowing ball (2× fetch rewards) |
+| ✨ **Feedback** | Floating "+XP" / "+xu" numbers, and level, coins and affection in the tray tooltip. New players get a 60-coin welcome gift |
+
 ## Memory 🧠
 
 Lucky saves what it remembers to `%APPDATA%\LuckyPet\memory.txt`, a plain `key=value` file. Lucky writes it at most every 30 s when something changes, every 5 min regardless, on exit, and when Windows shuts down. Each write goes to a temp file first and then replaces the old one.
@@ -36,13 +45,15 @@ Lucky saves what it remembers to `%APPDATA%\LuckyPet\memory.txt`, a plain `key=v
 
 ## Art
 
-All sprites are drawn procedurally by [`art/render_sprites.py`](art/render_sprites.py) (Python, NumPy and Pillow):
+The art uses a cartoon **idle-game style**: bold ink outlines, flat two-tone cel shading with cool blue shadows, saturated colours, and crisp white specular dots. All sprites are drawn procedurally by [`art/render_sprites.py`](art/render_sprites.py) (Python, NumPy and Pillow):
 
-- **Signed distance fields** with smooth unions, so the body parts blend like a plush toy.
-- **Lighting from surface normals**: diffuse, specular and a cool rim light. Eyes and nose get extra gloss.
-- **Fur grain and fluffy edges** from value noise anchored to each body part, so the texture doesn't swim between frames.
-- **Ambient occlusion** where parts overlap, husky cap and goggle markings, anime eyes with a lash line and highlights.
-- Rendered at 4×, downsampled in premultiplied space, with a **baked white sticker outline**.
+- **Signed distance fields** with smooth unions, so body parts merge into clean chibi shapes.
+- Surface normals drive a **two-band toon shader**. White fur gets a lighter shadow so it stays clean.
+- Every part gets an **ink line** along its inner edge. The silhouette gets a thicker ink outline plus a white sticker ring.
+- Subtle fluffy edges from value noise anchored to each part, so nothing swims between frames.
+- Husky cap and goggle markings, anime eyes with a lash line and highlights, and light ambient occlusion where parts overlap.
+- Rendered at 4×, then downsampled in premultiplied space.
+- Accessories are drawn at runtime in the same toon style and follow per-frame head and neck anchors.
 
 ```powershell
 python art/render_sprites.py assets --preview docs/sprites.png   # regenerate sprites (~4 min)

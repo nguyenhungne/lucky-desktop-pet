@@ -31,16 +31,16 @@ def C(*v):
     return np.array(v, np.float32)
 
 
-FUR_D = C(60, 74, 108)
-FUR_M = C(114, 131, 166)
+FUR_D = C(56, 82, 152)
+FUR_M = C(104, 140, 214)
 FUR_L = C(150, 166, 198)
-WHITE = C(247, 250, 255)
-PINK = C(250, 186, 206)
+WHITE = C(250, 252, 255)
+PINK = C(255, 168, 200)
 NOSE = C(30, 34, 48)
-LINE = C(48, 54, 78)
-AQUA = C(38, 186, 208)
+LINE = C(30, 34, 64)
+AQUA = C(34, 208, 226)
 SILVER = C(222, 230, 244)
-TONGUE = C(240, 120, 148)
+TONGUE = C(255, 112, 150)
 MOUTH = C(112, 42, 64)
 
 
@@ -113,10 +113,14 @@ def vnoise(x, y, seed=0.0):
     return (a + (b - a) * u) + ((c + (d - c) * u) - (a + (b - a) * u)) * v
 
 
+FLUFF = 0.4   # idle/cartoon style: clean shapes, only a hint of fluff
+
+
 def fur_noise(cx, cy, seed, freq=1.3):
-    """Fur grain anchored to a part's local coordinates (doesn't swim between frames)."""
+    """Fur noise anchored to a part's local coordinates (doesn't swim between frames)."""
     lx, ly = (X - cx) * freq, (Y - cy) * freq * 0.55
-    return 0.65 * vnoise(lx, ly, seed) + 0.35 * vnoise(lx * 2.3, ly * 2.3, seed + 3)
+    n = 0.65 * vnoise(lx, ly, seed) + 0.35 * vnoise(lx * 2.3, ly * 2.3, seed + 3)
+    return 0.5 + (n - 0.5) * FLUFF
 
 
 def soft_mask(d, soft=0.6):
@@ -143,7 +147,7 @@ class Canvas:
         self.p = rgb * a[..., None] + self.p * (1 - a[..., None])
         self.a = a + self.a * (1 - a)
 
-    def part(self, d, base, round_r, gloss=0.06, shin=18, rim=0.35, grain=None, ao=0.28, alpha_mul=1.0):
+    def part(self, d, base, round_r, gloss=0.06, shin=18, rim=0.35, grain=None, ao=0.16, alpha_mul=1.0):
         t = np.clip(-d / round_r, 0, 1)
         z = round_r * np.sqrt(np.clip(1 - (1 - t) ** 2, 0, 1))
         gy, gx = np.gradient(z)
@@ -154,12 +158,20 @@ class Canvas:
         diff = np.clip(nx * L[0] + ny * L[1] + nz * L[2], 0, 1)
         spec = np.clip(nx * HV[0] + ny * HV[1] + nz * HV[2], 0, 1) ** shin * gloss
         b = base if base.ndim == 3 else np.broadcast_to(base, (H, W, 3))
-        col = b * (0.5 + 0.62 * diff)[..., None]
-        if grain is not None:
-            col = col * (0.955 + 0.09 * grain)[..., None]
-        rim_side = np.clip(-nx * 0.7 - ny * 0.7 + 0.15, 0, 1)
-        col = col + C(175, 210, 255) * ((1 - nz) ** 2.2 * rim * rim_side)[..., None]
-        col = col + 255 * spec[..., None]
+        # two-tone cel shading with a cool, blue-tinted shadow band
+        lit = np.clip((diff - 0.30) / 0.06, 0, 1)
+        lum = (b[..., 0] * 0.3 + b[..., 1] * 0.59 + b[..., 2] * 0.11)
+        soft = np.clip((lum - 190) / 60, 0, 1)[..., None] * 0.55      # whites get a lighter shadow
+        shade = C(0.76, 0.81, 0.95)
+        shade = shade + (1.0 - shade) * soft
+        col = b * (shade + (1.0 - shade) * lit[..., None]) * 1.02
+        # crisp white specular dot on glossy parts
+        if gloss >= 0.3:
+            col = col + (255 - col) * (np.clip((spec / gloss - 0.55) / 0.08, 0, 1) * 0.95)[..., None]
+        # ink outline along the inside of the silhouette
+        lw = 0.95 if round_r > 2.5 else 0.7
+        line = np.clip((lw + d) * R + 0.5, 0, 1) * np.clip(0.5 - d * R, 0, 1)
+        col = col + (LINE - col) * line[..., None]
         a = np.clip(0.5 - d * R, 0, 1) * alpha_mul
         if ao > 0:
             self.occlude(a, ao)
@@ -389,11 +401,16 @@ def finish(cv):
     rgb = np.where(a[..., None] > 1e-4, cv.p / np.maximum(a[..., None], 1e-4), 0)
     # white die-cut sticker outline
     am = Image.fromarray((a * 255).astype(np.uint8), 'L')
-    dil = am.filter(ImageFilter.MaxFilter(7)).filter(ImageFilter.MaxFilter(7)).filter(ImageFilter.GaussianBlur(1.2))
-    da = np.asarray(dil, np.float32) / 255
-    oc = C(244, 248, 255)
-    out_p = rgb * a[..., None] + oc * (da * (1 - a))[..., None]
-    out_a = a + da * (1 - a)
+    ink = am.filter(ImageFilter.MaxFilter(7)).filter(ImageFilter.GaussianBlur(0.8))
+    wht = ink.filter(ImageFilter.MaxFilter(7)).filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.GaussianBlur(1.0))
+    ia = np.asarray(ink, np.float32) / 255
+    wa = np.asarray(wht, np.float32) / 255
+    out_p = C(250, 252, 255) * wa[..., None]
+    out_a = wa.copy()
+    out_p = LINE * ia[..., None] + out_p * (1 - ia[..., None])
+    out_a = ia + out_a * (1 - ia)
+    out_p = rgb * a[..., None] + out_p * (1 - a[..., None])
+    out_a = a + out_a * (1 - a)
     # downsample in premultiplied space
     big = np.dstack([out_p, out_a * 255]).astype(np.float32)
     w2, h2 = CW * OUT_SCALE, CH * OUT_SCALE

@@ -45,6 +45,11 @@ namespace LuckyPet
         public bool RemindOn = true;
         public float Size = 0.85f;
         public string LastMorning = "", LastNight = "";
+        public int Level = 1, Xp, Coins;
+        public string Owned = "", EqHead = "", EqNeck = "", EqFace = "";
+        public bool Has(string id) { return ("," + Owned + ",").Contains("," + id + ","); }
+        public void Add(string id) { if (!Has(id)) Owned = Owned.Length == 0 ? id : Owned + "," + id; }
+        public int XpNeeded { get { return 60 + 30 * Level; } }
 
         public static string Folder { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LuckyPet"); } }
         public static string FilePath { get { return Path.Combine(Folder, "memory.txt"); } }
@@ -88,6 +93,13 @@ namespace LuckyPet
                         case "size": m.Size = Math.Max(0.6f, Math.Min(2.5f, float.Parse(v, CI))); break;
                         case "last_morning": m.LastMorning = v; break;
                         case "last_night": m.LastNight = v; break;
+                        case "level": m.Level = Math.Max(1, int.Parse(v, CI)); break;
+                        case "xp": m.Xp = int.Parse(v, CI); break;
+                        case "coins": m.Coins = int.Parse(v, CI); break;
+                        case "owned": m.Owned = v; break;
+                        case "eq_head": m.EqHead = v; break;
+                        case "eq_neck": m.EqNeck = v; break;
+                        case "eq_face": m.EqFace = v; break;
                     }
                 }
                 catch { }
@@ -120,6 +132,13 @@ namespace LuckyPet
             sb.AppendLine("size=" + Size.ToString("0.00", CI));
             sb.AppendLine("last_morning=" + LastMorning);
             sb.AppendLine("last_night=" + LastNight);
+            sb.AppendLine("level=" + Level.ToString(CI));
+            sb.AppendLine("xp=" + Xp.ToString(CI));
+            sb.AppendLine("coins=" + Coins.ToString(CI));
+            sb.AppendLine("owned=" + Owned);
+            sb.AppendLine("eq_head=" + EqHead);
+            sb.AppendLine("eq_neck=" + EqNeck);
+            sb.AppendLine("eq_face=" + EqFace);
             string tmp = FilePath + ".tmp";
             File.WriteAllText(tmp, sb.ToString(), new UTF8Encoding(false));
             if (File.Exists(FilePath)) File.Replace(tmp, FilePath, null); else File.Move(tmp, FilePath);
@@ -204,6 +223,15 @@ namespace LuckyPet
         int eatStart;
         string bubbleText; int bubbleUntil;
 
+        // idle-game layer
+        class Floater { public string Text; public float X, Y; public int T0; public Color C; }
+        List<Floater> floaters = new List<Floater>();
+        DateTime lastIncome = DateTime.Now;
+        int sparkleUntil;
+        ShopForm shop;
+        [StructLayout(LayoutKind.Sequential)] struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+        [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+
         public PetForm()
         {
             using (var g = Graphics.FromHwnd(IntPtr.Zero)) dpiScale = g.DpiX / 96f;
@@ -230,6 +258,7 @@ namespace LuckyPet
             focusItem = new ToolStripMenuItem("Tập trung 25 phút 🎯");
             focusItem.Click += delegate { ToggleFocus(); };
             menu.Items.Add(focusItem);
+            menu.Items.Add("Cửa hàng & cấp độ 🏆", null, delegate { OpenShop(); });
             menu.Items.Add("Kỷ niệm với Lucky 📖", null, delegate { ShowMemories(); });
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Cho Lucky đi ngủ 💤", null, delegate { SetState(St.Sleep, 1200); });
@@ -257,6 +286,7 @@ namespace LuckyPet
 
             tray = new NotifyIcon { Icon = MakeIcon(), Text = "Lucky", Visible = true, ContextMenuStrip = menu };
             tray.MouseClick += delegate(object s, MouseEventArgs e) { if (e.Button == MouseButtons.Left) Pet(); };
+            tray.DoubleClick += delegate { OpenShop(); };
             ContextMenuStrip = menu;
             UpdateTooltip();
 
@@ -344,7 +374,24 @@ namespace LuckyPet
                 pendingText = "Từ hôm nay mình sẽ ở trên taskbar với bạn. Click để xoa đầu, nhấp đúp để ném bóng nhé!";
                 dirty = true; return;
             }
+            if (mem.Level == 1 && mem.Coins == 0 && mem.Owned == "")
+            {
+                mem.Coins = 60; dirty = true;
+                pendingTitle = "Quà chào mừng 🎁";
+                pendingText = "Lucky tặng bạn 60 xu may mắn! Chuột phải vào Lucky → Cửa hàng & cấp độ để mua đồ cho Lucky nha.";
+                return;
+            }
             TimeSpan away = DateTime.Now - mem.LastSeen;
+            if (away.TotalMinutes >= 10)
+            {
+                int earned = (int)(Math.Min(away.TotalMinutes, 480) * IncomeRate() * 0.5);
+                if (earned > 0)
+                {
+                    mem.Coins += earned;
+                    pendingTitle = "Chào mừng trở lại! 🪙";
+                    pendingText = "Lúc bạn vắng nhà, Lucky đã nhặt được " + earned + " xu may mắn.";
+                }
+            }
             if (away.TotalHours >= 12)
             {
                 mem.Affection = Math.Max(10, mem.Affection - Math.Min(30, away.TotalDays * 5));
@@ -374,6 +421,7 @@ namespace LuckyPet
                     tray.ShowBalloonTip(5000, "Lucky vui quá 🥰", "Bạn đã xoa đầu Lucky " + m + " lần rồi đó!", ToolTipIcon.None);
                 }
             dirty = true;
+            Reward(3, 0);
             UpdateTooltip();
             if (st == St.Focus) return;
             if (rnd.Next(4) == 0) Say(PetLines[rnd.Next(PetLines.Length)], 2500);
@@ -406,7 +454,7 @@ namespace LuckyPet
             if (tray == null) return;
             string t;
             if (st == St.Focus) t = "Lucky 🎯 tập trung · còn " + Math.Max(0, (int)Math.Ceiling((focusEnd - DateTime.Now).TotalMinutes)) + " phút";
-            else t = "Lucky ♥ " + (int)Math.Round(mem.Affection) + "% · " + mem.DaysTogether + " ngày" + (mem.Hungry ? " · đói bụng" : "");
+            else t = "Lucky Lv." + mem.Level + " · " + mem.Coins + " xu · ♥ " + (int)Math.Round(mem.Affection) + "%" + (mem.Hungry ? " · đói" : "");
             tray.Text = t.Length > 63 ? t.Substring(0, 63) : t;
         }
 
@@ -644,6 +692,8 @@ namespace LuckyPet
             if (proud)
             {
                 mem.Balls++; mem.Affection = Math.Min(100, mem.Affection + 2); dirty = true;
+                int mul = mem.Has("up_glowball") ? 2 : 1;
+                Reward(12 * mul, 3 * mul);
                 if (rnd.Next(2) == 0) Say("Nữa đi! Ném nữa đi! ♥", 2500);
                 SetState(St.Remind, 50); // happy sitting wag
             }
@@ -657,6 +707,11 @@ namespace LuckyPet
             var now = DateTime.Now;
             if ((now - lastDecay).TotalMinutes >= 1) { lastDecay = now; mem.Affection = Math.Max(0, mem.Affection - 0.02); UpdateTooltip(); }
             if ((now - lastClock).TotalSeconds >= 30) { lastClock = now; ClockChecks(); }
+            if ((now - lastIncome).TotalSeconds >= 60)
+            {
+                lastIncome = now;
+                if (UserActive()) Reward(1, (int)Math.Round(IncomeRate()));
+            }
             if ((dirty && (now - lastSave).TotalSeconds > 30) || (now - lastSave).TotalMinutes > 5) SaveMem();
 
             if (++fsCheck >= 25)
@@ -671,6 +726,7 @@ namespace LuckyPet
             if (st == St.Focus && now >= focusEnd)
             {
                 mem.FocusSessions++; dirty = true;
+                Reward(40, 15);
                 focusItem.Text = "Tập trung 25 phút 🎯";
                 SetState(St.Happy, 60);
                 tray.ShowBalloonTip(7000, "Xong 25 phút rồi! 🎉", "Bạn giỏi quá. Đứng dậy nghỉ 5 phút, uống nước nha!", ToolTipIcon.None);
@@ -682,6 +738,7 @@ namespace LuckyPet
             {
                 nextRemind = now.AddMinutes(RemindMinutes);
                 mem.Reminders++; dirty = true;
+                Reward(3, 0);
                 SetState(St.Remind, 200);
                 Say("Uống một ngụm nước và vươn vai nha!", 7000);
                 tray.ShowBalloonTip(7000, "Lucky nhắc nè 💧", "Uống một ngụm nước và đứng dậy vươn vai 1 phút nhé!", ToolTipIcon.None);
@@ -745,6 +802,7 @@ namespace LuckyPet
                         {
                             boneActive = false; boneWin.Hide();
                             mem.Treats++; mem.LastFed = DateTime.Now; mem.Affection = Math.Min(100, mem.Affection + 5); dirty = true;
+                            Reward(8, 0);
                             UpdateTooltip();
                             Say(rnd.Next(2) == 0 ? "Ngon quá! Cảm ơn bạn ♥" : "Măm măm… no rồi nè ♥", 3000);
                             SetState(St.Happy, 60);
@@ -765,6 +823,7 @@ namespace LuckyPet
             if (st == St.Sit && rnd.Next(70) == 0) blinkUntil = Environment.TickCount + 140;
             if (st != St.Drag && st != St.Focus && st != St.Eat && --stateTicks <= 0) NextRandomState();
 
+            if (floaters.Count > 0 || Environment.TickCount < sparkleUntil) timer.Interval = 40;
             StepBall(); StepBone(); StepBubble();
             Render();
         }
@@ -807,6 +866,7 @@ namespace LuckyPet
                 }
                 g.DrawImageUnscaled(frames[idx], 0, 0);
                 g.ScaleTransform(S, S);
+                DrawAccessories(g, anim, idx);
                 if (st == St.Carry) DrawBall(g, dir > 0 ? 117 : CW - 117, 71, 5.5f, 0);
                 DrawOverlay(g);
             }
@@ -815,8 +875,111 @@ namespace LuckyPet
 
         float HeadX(float hx) { return dir > 0 ? hx : CW - hx; }
 
+        // ---------------------------------------------------------- idle game
+        public Memory Mem { get { return mem; } }
+
+        public double IncomeRate()
+        {
+            double r = 1 + mem.Level * 0.2;
+            if (mem.Has("up_bowl")) r += 1;
+            if (mem.Has("up_bed")) r += 2;
+            if (mem.Has("up_house")) r += 5;
+            return r;
+        }
+
+        static bool UserActive()
+        {
+            var li = new LASTINPUTINFO { cbSize = (uint)Marshal.SizeOf(typeof(LASTINPUTINFO)) };
+            if (!GetLastInputInfo(ref li)) return true;
+            return unchecked((uint)Environment.TickCount - li.dwTime) < 5 * 60 * 1000;
+        }
+
+        void Reward(int xp, int coins)
+        {
+            mem.Xp += xp; mem.Coins += coins; dirty = true;
+            float hx = HeadX(80);
+            if (xp > 0) floaters.Add(new Floater { Text = "+" + xp + " XP", X = hx - 18, Y = 30, T0 = Environment.TickCount, C = Color.FromArgb(130, 240, 236) });
+            if (coins > 0) floaters.Add(new Floater { Text = "+" + coins + " xu", X = hx + 2, Y = 40, T0 = Environment.TickCount + 250, C = Color.FromArgb(255, 226, 120) });
+            while (mem.Xp >= mem.XpNeeded)
+            {
+                mem.Xp -= mem.XpNeeded; mem.Level++;
+                int bonus = 20 * mem.Level; mem.Coins += bonus;
+                sparkleUntil = Environment.TickCount + 2500;
+                Say("Lên cấp " + mem.Level + "! Thưởng " + bonus + " xu ✦", 4500);
+                tray.ShowBalloonTip(5000, "Lucky lên cấp " + mem.Level + "! ⭐", "Thưởng " + bonus + " xu may mắn. Mở Cửa hàng để mua đồ cho Lucky nha!", ToolTipIcon.None);
+                if (st != St.Focus && st != St.Eat && st != St.Carry) SetState(St.Happy, 60);
+            }
+            UpdateTooltip();
+            if (shop != null && !shop.IsDisposed && shop.Visible) shop.RefreshAll();
+        }
+
+        public void Changed() { dirty = true; UpdateTooltip(); Render(); }
+
+        void OpenShop()
+        {
+            if (shop == null || shop.IsDisposed) shop = new ShopForm(this);
+            shop.RefreshAll(); shop.Show(); shop.Activate();
+        }
+
+        // Head / neck anchors for each animation frame (mirrors the poses in art/render_sprites.py)
+        static void Anchors(string anim, int idx, out float cx, out float cy, out float r, out float nx, out float ny)
+        {
+            float bob = 0;
+            if (anim == "walk") bob = (float)Math.Abs(Math.Sin(idx / 8.0 * 2 * Math.PI)) * 1.4f;
+            else if (anim == "run") bob = (float)Math.Abs(Math.Sin(idx / 6.0 * 2 * Math.PI)) * 2.5f;
+            if (anim.StartsWith("sit")) { cx = 66; cy = 47; r = 24; nx = 66; ny = 71; }
+            else if (anim == "sleep") { cx = 84; cy = 95; r = 20; nx = 80; ny = 92; }
+            else if (anim == "eat") { cx = 95; cy = 90; r = 20; nx = 88; ny = 85; }
+            else { cx = 92; cy = 56 - bob; r = 23; nx = 87; ny = 79 - bob; }
+        }
+
+        void DrawAccessories(Graphics g, string anim, int idx)
+        {
+            if (mem.EqHead == "" && mem.EqNeck == "" && mem.EqFace == "") return;
+            float cx, cy, r, nx, ny;
+            Anchors(anim, idx, out cx, out cy, out r, out nx, out ny);
+            var gs = g.Save();
+            if (dir < 0) { g.TranslateTransform(CW, 0); g.ScaleTransform(-1, 1); }
+            if (mem.EqNeck != "") Accessory.Draw(g, mem.EqNeck, cx, cy, r, nx, ny);
+            if (mem.EqFace != "" && anim != "sleep") Accessory.Draw(g, mem.EqFace, cx, cy, r, nx, ny);
+            if (mem.EqHead != "") Accessory.Draw(g, mem.EqHead, cx, cy, r, nx, ny);
+            g.Restore(gs);
+        }
+
         void DrawOverlay(Graphics g)
         {
+            int nowT = Environment.TickCount;
+            if (floaters.Count > 0)
+            {
+                using (var f = new Font("Segoe UI", 6.5f, FontStyle.Bold))
+                    for (int i = floaters.Count - 1; i >= 0; i--)
+                    {
+                        var fl = floaters[i];
+                        int t = nowT - fl.T0;
+                        if (t > 1600) { floaters.RemoveAt(i); continue; }
+                        if (t < 0) continue;
+                        float ph = t / 1600f;
+                        int a = (int)(255 * (1 - ph * ph));
+                        float yy = fl.Y - ph * 22;
+                        using (var sh = new SolidBrush(Color.FromArgb(a * 3 / 4, 24, 30, 60)))
+                            for (int k = 0; k < 4; k++) g.DrawString(fl.Text, f, sh, fl.X + (k % 2 == 0 ? -0.7f : 0.7f), yy + (k < 2 ? -0.7f : 0.7f));
+                        using (var b = new SolidBrush(Color.FromArgb(a, fl.C))) g.DrawString(fl.Text, f, b, fl.X, yy);
+                    }
+            }
+            if (nowT < sparkleUntil)
+            {
+                float ph = 1 - (sparkleUntil - nowT) / 2500f;
+                for (int k = 0; k < 8; k++)
+                {
+                    double a = k * Math.PI / 4 + ph * 2;
+                    float rr = 20 + ph * 30, sx = 65 + (float)Math.Cos(a) * rr, sy = 60 + (float)Math.Sin(a) * rr * 0.7f;
+                    int al = (int)(255 * (1 - ph));
+                    using (var p = new Pen(Color.FromArgb(al, 255, 236, 140), 1.6f))
+                    {
+                        g.DrawLine(p, sx - 3, sy, sx + 3, sy); g.DrawLine(p, sx, sy - 3, sx, sy + 3);
+                    }
+                }
+            }
             if (st == St.Sleep || st == St.Focus)
             {
                 float hx = HeadX(86);
@@ -939,4 +1102,281 @@ namespace LuckyPet
 
         protected override void OnFormClosed(FormClosedEventArgs e) { SaveMem(); tray.Visible = false; base.OnFormClosed(e); }
     }
+
+    // ================================================================ accessories (idle-game cartoon style: bold outlines, flat 2-tone)
+    static class Accessory
+    {
+        public class Item { public string Id, Name, Slot, Desc; public int Price, MinLevel; }
+        public static readonly Item[] Catalog = {
+            new Item { Id = "neck_aqua",   Slot = "neck", Name = "Khăn cổ aqua",      Price = 30,  MinLevel = 1,  Desc = "Màu nước, hợp mệnh Thủy" },
+            new Item { Id = "neck_navy",   Slot = "neck", Name = "Khăn navy chấm bi", Price = 30,  MinLevel = 1,  Desc = "Lịch lãm như dân văn phòng" },
+            new Item { Id = "head_bow",    Slot = "head", Name = "Nơ hồng",           Price = 40,  MinLevel = 1,  Desc = "Dễ thương xỉu" },
+            new Item { Id = "neck_silver", Slot = "neck", Name = "Khăn bạc",          Price = 60,  MinLevel = 2,  Desc = "Kim sinh Thủy, thêm may mắn" },
+            new Item { Id = "head_beanie", Slot = "head", Name = "Nón len xanh",      Price = 80,  MinLevel = 2,  Desc = "Ấm áp mùa đông" },
+            new Item { Id = "head_party",  Slot = "head", Name = "Nón sinh nhật",     Price = 100, MinLevel = 3,  Desc = "Ngày nào cũng là ngày vui" },
+            new Item { Id = "face_shades", Slot = "face", Name = "Kính râm",          Price = 120, MinLevel = 3,  Desc = "Ngầu hết nấc" },
+            new Item { Id = "head_crown",  Slot = "head", Name = "Vương miện bạc",    Price = 500, MinLevel = 10, Desc = "Dành cho Lucky đẳng cấp" },
+            new Item { Id = "up_bowl",     Slot = "up",   Name = "Bát ăn bằng bạc",   Price = 50,  MinLevel = 1,  Desc = "+1 xu mỗi phút" },
+            new Item { Id = "up_bed",      Slot = "up",   Name = "Đệm ngủ êm",        Price = 150, MinLevel = 2,  Desc = "+2 xu mỗi phút" },
+            new Item { Id = "up_glowball", Slot = "up",   Name = "Bóng phát sáng",    Price = 220, MinLevel = 4,  Desc = "Nhặt bóng được thưởng x2" },
+            new Item { Id = "up_house",    Slot = "up",   Name = "Nhà gỗ nhỏ",        Price = 600, MinLevel = 6,  Desc = "+5 xu mỗi phút" },
+        };
+
+        static readonly Color Ink = Color.FromArgb(34, 38, 66);
+
+        // Flat cel shading: base fill, lower shadow band, white highlight, bold ink outline
+        static void Toon(Graphics g, GraphicsPath path, Color baseC, Color shadeC, float lw)
+        {
+            using (var b = new SolidBrush(baseC)) g.FillPath(b, path);
+            var bb = path.GetBounds();
+            var old = g.Clip;
+            g.SetClip(path, CombineMode.Intersect);
+            using (var b = new SolidBrush(shadeC)) g.FillEllipse(b, bb.X + bb.Width * 0.15f, bb.Y + bb.Height * 0.55f, bb.Width * 1.2f, bb.Height);
+            using (var b = new SolidBrush(Color.FromArgb(200, 255, 255, 255))) g.FillEllipse(b, bb.X + bb.Width * 0.15f, bb.Y + bb.Height * 0.12f, bb.Width * 0.28f, bb.Height * 0.2f);
+            g.Clip = old;
+            using (var p = new Pen(Ink, lw) { LineJoin = LineJoin.Round }) g.DrawPath(p, path);
+        }
+
+        public static void Draw(Graphics g, string id, float cx, float cy, float r, float nx, float ny)
+        {
+            switch (id)
+            {
+                case "neck_aqua": Scarf(g, nx, ny, Color.FromArgb(64, 214, 226), Color.FromArgb(24, 160, 196), false); break;
+                case "neck_navy": Scarf(g, nx, ny, Color.FromArgb(64, 98, 186), Color.FromArgb(40, 66, 140), true); break;
+                case "neck_silver": Scarf(g, nx, ny, Color.FromArgb(240, 244, 252), Color.FromArgb(188, 200, 224), false); break;
+                case "head_bow": Bow(g, cx + r * 0.52f, cy - r * 0.72f, r * 0.3f); break;
+                case "head_beanie": Beanie(g, cx, cy, r); break;
+                case "head_party": Party(g, cx, cy, r); break;
+                case "head_crown": Crown(g, cx, cy, r); break;
+                case "face_shades": Shades(g, cx, cy, r); break;
+            }
+        }
+
+        static void Scarf(Graphics g, float nx, float ny, Color a, Color b, bool dots)
+        {
+            using (var path = new GraphicsPath())
+            {
+                path.AddClosedCurve(new[] { new PointF(nx - 10, ny - 1.5f), new PointF(nx + 12, ny + 0.5f), new PointF(nx + 2.5f, ny + 13) }, 0.18f);
+                Toon(g, path, a, b, 1.1f);
+                if (dots) using (var w = new SolidBrush(Color.White))
+                    foreach (var d in new[] { new PointF(nx - 4, ny + 2), new PointF(nx + 4, ny + 3), new PointF(nx + 1, ny + 7), new PointF(nx + 8, ny + 1) })
+                        g.FillEllipse(w, d.X - 1f, d.Y - 1f, 2f, 2f);
+            }
+            using (var k = new GraphicsPath()) { k.AddEllipse(nx + 8.5f, ny - 3, 5, 4.5f); Toon(g, k, a, b, 1f); }
+        }
+
+        static void Bow(Graphics g, float x, float y, float s)
+        {
+            Color a = Color.FromArgb(255, 150, 196), b = Color.FromArgb(232, 96, 150);
+            foreach (int side in new[] { -1, 1 })
+                using (var path = new GraphicsPath())
+                {
+                    path.AddClosedCurve(new[] { new PointF(x, y), new PointF(x + side * s * 1.6f, y - s * 0.95f), new PointF(x + side * s * 1.7f, y + s * 0.95f) }, 0.35f);
+                    Toon(g, path, a, b, 1f);
+                }
+            using (var c = new GraphicsPath()) { c.AddEllipse(x - s * 0.48f, y - s * 0.48f, s * 0.96f, s * 0.96f); Toon(g, c, a, b, 1f); }
+        }
+
+        static void Beanie(Graphics g, float cx, float cy, float r)
+        {
+            var dome = new RectangleF(cx - r * 0.66f, cy - r * 1.22f, r * 1.32f, r * 1.0f);
+            using (var path = new GraphicsPath())
+            {
+                path.AddArc(dome, 180, 180); path.CloseFigure();
+                Toon(g, path, Color.FromArgb(70, 150, 240), Color.FromArgb(40, 106, 200), 1.1f);
+                using (var p = new Pen(Color.FromArgb(90, 255, 255, 255), 0.9f))
+                    for (int k = -2; k <= 2; k++) g.DrawLine(p, cx + k * r * 0.2f, cy - r * 0.76f, cx + k * r * 0.14f, cy - r * 1.1f);
+            }
+            using (var band = new GraphicsPath())
+            {
+                band.AddRectangle(new RectangleF(cx - r * 0.72f, cy - r * 0.8f, r * 1.44f, r * 0.26f));
+                Toon(g, band, Color.FromArgb(246, 248, 255), Color.FromArgb(200, 212, 236), 1.1f);
+            }
+            using (var pom = new GraphicsPath()) { pom.AddEllipse(cx - r * 0.21f, cy - r * 1.4f, r * 0.42f, r * 0.42f); Toon(g, pom, Color.White, Color.FromArgb(206, 218, 240), 1f); }
+        }
+
+        static void Party(Graphics g, float cx, float cy, float r)
+        {
+            using (var path = new GraphicsPath())
+            {
+                path.AddPolygon(new[] { new PointF(cx - r * 0.36f, cy - r * 0.8f), new PointF(cx + r * 0.34f, cy - r * 0.84f), new PointF(cx + r * 0.12f, cy - r * 1.75f) });
+                using (var b = new SolidBrush(Color.FromArgb(70, 214, 230))) g.FillPath(b, path);
+                var old = g.Clip; g.SetClip(path, CombineMode.Intersect);
+                using (var p = new Pen(Color.White, r * 0.1f))
+                    for (int k = 0; k < 4; k++) g.DrawLine(p, cx - r, cy - r * (0.9f + k * 0.24f) + r * 0.3f, cx + r, cy - r * (0.9f + k * 0.24f) - r * 0.2f);
+                g.Clip = old;
+                using (var p = new Pen(Ink, 1.1f) { LineJoin = LineJoin.Round }) g.DrawPath(p, path);
+            }
+            using (var pom = new GraphicsPath()) { pom.AddEllipse(cx + r * 0.12f - r * 0.17f, cy - r * 1.92f, r * 0.34f, r * 0.34f); Toon(g, pom, Color.FromArgb(255, 150, 196), Color.FromArgb(232, 96, 150), 1f); }
+        }
+
+        static void Crown(Graphics g, float cx, float cy, float r)
+        {
+            float w = r * 0.95f, b0 = cy - r * 0.78f, h = r * 0.55f;
+            var pts = new[] {
+                new PointF(cx - w / 2, b0), new PointF(cx - w / 2, b0 - h * 0.6f), new PointF(cx - w * 0.25f, b0 - h * 0.25f),
+                new PointF(cx, b0 - h), new PointF(cx + w * 0.25f, b0 - h * 0.25f), new PointF(cx + w / 2, b0 - h * 0.6f), new PointF(cx + w / 2, b0) };
+            using (var path = new GraphicsPath()) { path.AddPolygon(pts); Toon(g, path, Color.FromArgb(236, 242, 252), Color.FromArgb(182, 196, 222), 1.1f); }
+            foreach (var gx in new[] { -w * 0.3f, 0f, w * 0.3f })
+                using (var gem = new GraphicsPath()) { gem.AddEllipse(cx + gx - r * 0.08f, b0 - h * 0.34f, r * 0.16f, r * 0.16f); Toon(g, gem, Color.FromArgb(80, 170, 255), Color.FromArgb(40, 110, 220), 0.8f); }
+        }
+
+        static void Shades(Graphics g, float cx, float cy, float r)
+        {
+            var L = new RectangleF(cx - r * 0.62f, cy - r * 0.27f, r * 0.5f, r * 0.38f);
+            var R = new RectangleF(cx + r * 0.12f, cy - r * 0.29f, r * 0.48f, r * 0.37f);
+            using (var p = new Pen(Ink, 1.3f))
+            {
+                g.DrawLine(p, L.Right, L.Y + L.Height * 0.3f, R.X, R.Y + R.Height * 0.3f);
+                g.DrawLine(p, L.X, L.Y + L.Height * 0.3f, cx - r * 0.95f, cy - r * 0.32f);
+            }
+            foreach (var rr in new[] { L, R })
+                using (var path = new GraphicsPath())
+                {
+                    float k = rr.Height * 0.45f;
+                    path.AddArc(rr.X, rr.Y, k, k, 180, 90); path.AddArc(rr.Right - k, rr.Y, k, k, 270, 90);
+                    path.AddArc(rr.Right - k, rr.Bottom - k, k, k, 0, 90); path.AddArc(rr.X, rr.Bottom - k, k, k, 90, 90);
+                    path.CloseFigure();
+                    Toon(g, path, Color.FromArgb(46, 56, 96), Color.FromArgb(24, 28, 52), 1f);
+                }
+        }
+
+        public static Bitmap Preview(Item it, int size)
+        {
+            var b = new Bitmap(size, size, PixelFormat.Format32bppArgb);
+            using (var g = Graphics.FromImage(b))
+            {
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.Clear(Color.FromArgb(228, 240, 255));
+                float s = size / 40f;
+                g.ScaleTransform(s, s);
+                if (it.Slot == "up") UpgradeIcon(g, it.Id);
+                else if (it.Slot == "neck") Draw(g, it.Id, 20, 8, 20, 17, 13);
+                else Draw(g, it.Id, 20, it.Slot == "face" ? 22 : 37, 20, 0, 0);
+            }
+            return b;
+        }
+
+        static void UpgradeIcon(Graphics g, string id)
+        {
+            using (var p = new GraphicsPath())
+            {
+                switch (id)
+                {
+                    case "up_bowl":
+                        p.AddArc(8, 10, 24, 22, 0, 180); p.CloseFigure();
+                        Toon(g, p, Color.FromArgb(236, 242, 252), Color.FromArgb(182, 196, 222), 1.4f);
+                        using (var k = new GraphicsPath()) { k.AddEllipse(10, 16, 20, 6); Toon(g, k, Color.FromArgb(214, 160, 100), Color.FromArgb(180, 120, 70), 1f); }
+                        break;
+                    case "up_bed":
+                        p.AddEllipse(5, 16, 30, 16);
+                        Toon(g, p, Color.FromArgb(110, 170, 250), Color.FromArgb(70, 120, 210), 1.4f);
+                        using (var k = new GraphicsPath()) { k.AddEllipse(10, 18, 20, 9); Toon(g, k, Color.FromArgb(250, 252, 255), Color.FromArgb(210, 220, 240), 1f); }
+                        break;
+                    case "up_glowball":
+                        using (var gl = new SolidBrush(Color.FromArgb(90, 160, 240, 255))) g.FillEllipse(gl, 5, 5, 30, 30);
+                        p.AddEllipse(10, 10, 20, 20);
+                        Toon(g, p, Color.FromArgb(80, 170, 255), Color.FromArgb(40, 110, 220), 1.4f);
+                        break;
+                    default:
+                        p.AddPolygon(new[] { new PointF(6, 20), new PointF(20, 7), new PointF(34, 20) });
+                        Toon(g, p, Color.FromArgb(80, 120, 200), Color.FromArgb(50, 84, 160), 1.4f);
+                        using (var w = new GraphicsPath()) { w.AddRectangle(new RectangleF(10, 20, 20, 14)); Toon(g, w, Color.FromArgb(214, 164, 110), Color.FromArgb(176, 124, 76), 1.4f); }
+                        using (var d = new SolidBrush(Ink)) g.FillEllipse(d, 16, 24, 8, 10);
+                        break;
+                }
+            }
+        }
+    }
+
+    // ================================================================ shop / progress window
+    class ShopForm : Form
+    {
+        readonly PetForm pet;
+        readonly Label header = new Label(), stats = new Label();
+        readonly ProgressBar bar = new ProgressBar();
+        readonly FlowLayoutPanel list = new FlowLayoutPanel();
+        static readonly Color Bg = Color.FromArgb(236, 244, 255), Card = Color.White, Accent = Color.FromArgb(28, 150, 196), InkC = Color.FromArgb(34, 46, 80);
+        float scale = -1;
+
+        public ShopForm(PetForm p)
+        {
+            pet = p;
+            Text = "Lucky · Cửa hàng & cấp độ";
+            Font = new Font("Segoe UI", 9.5f);
+            BackColor = Bg; ForeColor = InkC;
+            FormBorderStyle = FormBorderStyle.FixedSingle; MaximizeBox = false;
+            StartPosition = FormStartPosition.CenterScreen;
+            ShowIcon = false;
+            ClientSize = new Size(Dp(440), Dp(570));
+            header.Font = new Font("Segoe UI Black", 15f); header.AutoSize = true; header.Location = new Point(Dp(14), Dp(10));
+            bar.Location = new Point(Dp(18), Dp(50)); bar.Size = new Size(Dp(404), Dp(14));
+            stats.AutoSize = true; stats.Location = new Point(Dp(16), Dp(70)); stats.ForeColor = Color.FromArgb(70, 84, 120);
+            list.Location = new Point(Dp(10), Dp(122)); list.Size = new Size(Dp(420), Dp(440));
+            list.AutoScroll = true; list.FlowDirection = FlowDirection.TopDown; list.WrapContents = false;
+            Controls.Add(header); Controls.Add(bar); Controls.Add(stats); Controls.Add(list);
+            FormClosing += delegate(object s, FormClosingEventArgs e) { if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); } };
+        }
+
+        int Dp(int v)
+        {
+            if (scale < 0) using (var g = Graphics.FromHwnd(IntPtr.Zero)) scale = g.DpiX / 96f;
+            return (int)(v * scale);
+        }
+
+        public void RefreshAll()
+        {
+            var m = pet.Mem;
+            header.Text = "⭐ Lucky  Lv." + m.Level;
+            bar.Maximum = m.XpNeeded; bar.Value = Math.Min(m.Xp, m.XpNeeded);
+            stats.Text = "XP " + m.Xp + " / " + m.XpNeeded + "      🪙 " + m.Coins + " xu      ⏱ " + pet.IncomeRate().ToString("0.#") + " xu/phút\n" +
+                         "Xoa đầu, ném bóng, cho ăn, tập trung 25 phút để Lucky lên cấp nhanh!";
+            list.SuspendLayout();
+            var old = new List<Control>(); foreach (Control c in list.Controls) old.Add(c);
+            list.Controls.Clear(); foreach (var c in old) c.Dispose();
+            AddSection("🎀 Phụ kiện");
+            foreach (var it in Accessory.Catalog) if (it.Slot != "up") AddRow(it);
+            AddSection("🏠 Nâng cấp – tăng thu nhập");
+            foreach (var it in Accessory.Catalog) if (it.Slot == "up") AddRow(it);
+            list.ResumeLayout();
+        }
+
+        void AddSection(string t)
+        {
+            list.Controls.Add(new Label { Text = t, AutoSize = true, Font = new Font("Segoe UI Semibold", 10.5f), Margin = new Padding(Dp(6), Dp(10), 0, Dp(2)) });
+        }
+
+        void AddRow(Accessory.Item it)
+        {
+            var m = pet.Mem;
+            var row = new Panel { Size = new Size(Dp(392), Dp(54)), BackColor = Card, Margin = new Padding(Dp(4), Dp(3), 0, Dp(3)) };
+            var pic = new PictureBox { Image = Accessory.Preview(it, Dp(42)), Size = new Size(Dp(42), Dp(42)), Location = new Point(Dp(6), Dp(6)) };
+            var name = new Label { Text = it.Name, Font = new Font("Segoe UI Semibold", 9.5f), AutoSize = true, Location = new Point(Dp(56), Dp(8)) };
+            var desc = new Label { Text = it.Desc, AutoSize = true, ForeColor = Color.FromArgb(110, 122, 150), Location = new Point(Dp(56), Dp(28)) };
+            var btn = new Button { Size = new Size(Dp(118), Dp(32)), Location = new Point(Dp(266), Dp(11)), FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI Semibold", 9f) };
+            btn.FlatAppearance.BorderSize = 0;
+            bool owned = m.Has(it.Id);
+            string eq = it.Slot == "head" ? m.EqHead : it.Slot == "neck" ? m.EqNeck : it.Slot == "face" ? m.EqFace : null;
+            if (!owned && m.Level < it.MinLevel) { btn.Text = "🔒 Cần Lv." + it.MinLevel; btn.Enabled = false; btn.BackColor = Color.FromArgb(226, 230, 240); }
+            else if (!owned) { btn.Text = "Mua · " + it.Price + " xu"; bool ok = m.Coins >= it.Price; btn.BackColor = ok ? Accent : Color.FromArgb(200, 210, 226); btn.ForeColor = Color.White; btn.Enabled = ok; }
+            else if (it.Slot == "up") { btn.Text = "✔ Đã có"; btn.Enabled = false; btn.BackColor = Color.FromArgb(214, 244, 236); }
+            else if (eq == it.Id) { btn.Text = "Tháo ra"; btn.BackColor = Color.FromArgb(255, 226, 236); }
+            else { btn.Text = "Đeo vào"; btn.BackColor = Color.FromArgb(214, 236, 248); }
+            btn.Click += delegate
+            {
+                if (!m.Has(it.Id)) { if (m.Coins < it.Price) return; m.Coins -= it.Price; m.Add(it.Id); if (it.Slot != "up") Equip(it, true); }
+                else Equip(it, (it.Slot == "head" ? m.EqHead : it.Slot == "neck" ? m.EqNeck : m.EqFace) != it.Id);
+                pet.Changed(); RefreshAll();
+            };
+            row.Controls.Add(pic); row.Controls.Add(name); row.Controls.Add(desc); row.Controls.Add(btn);
+            list.Controls.Add(row);
+        }
+
+        void Equip(Accessory.Item it, bool on)
+        {
+            var m = pet.Mem; string v = on ? it.Id : "";
+            if (it.Slot == "head") m.EqHead = v; else if (it.Slot == "neck") m.EqNeck = v; else if (it.Slot == "face") m.EqFace = v;
+        }
+    }
+
 }
