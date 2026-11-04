@@ -1,11 +1,13 @@
-// Lucky - a tiny Husky desktop pet that lives on top of your Windows taskbar.
-// Pure WinForms + GDI+, no dependencies. Build with build.ps1 (uses the C# compiler bundled with Windows).
+// Lucky - a Husky desktop pet that lives on top of your Windows taskbar.
+// Sprites are pre-rendered by art/render_sprites.py and embedded into the exe by build.ps1.
 using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Globalization;
 using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
@@ -18,15 +20,8 @@ namespace LuckyPet
         [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
 
         [STAThread]
-        static void Main(string[] args)
+        static void Main()
         {
-            if (args.Length == 2 && args[0] == "--snapshot")
-            {
-                try { SetProcessDPIAware(); } catch { }
-                var f = new PetForm(true);
-                f.Snapshot(args[1]);
-                return;
-            }
             bool created;
             using (var m = new System.Threading.Mutex(true, "LuckyPet_SingleInstance", out created))
             {
@@ -38,23 +33,24 @@ namespace LuckyPet
         }
     }
 
-    enum St { Walk, Sit, Sleep, Drag, Fall, Happy, Chase, Remind }
+    enum St { Walk, Sit, Sleep, Drag, Fall, Happy, Chase, Remind, Fetch, Carry, GoEat, Eat, Focus }
 
-    // ---------- persistent memory (%APPDATA%\LuckyPet\memory.txt, key=value) ----------
+    // ================================================================ memory
     class Memory
     {
-        public DateTime FirstMet = DateTime.Now, LastSeen = DateTime.Now;
-        public int Pets, Chases, Reminders, Naps, Drops, DayMilestone, PetMilestone;
+        public DateTime FirstMet = DateTime.Now, LastSeen = DateTime.Now, LastFed = DateTime.Now;
+        public int Pets, Chases, Reminders, Naps, Drops, Balls, Treats, FocusSessions, DayMilestone, PetMilestone;
         public double Affection = 60, PosX = -1;
-        public float Size = 0.85f;
         public int Facing = 1;
         public bool RemindOn = true;
+        public float Size = 0.85f;
+        public string LastMorning = "", LastNight = "";
 
         public static string Folder { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LuckyPet"); } }
         public static string FilePath { get { return Path.Combine(Folder, "memory.txt"); } }
         static readonly CultureInfo CI = CultureInfo.InvariantCulture;
-
         public int DaysTogether { get { return (DateTime.Now.Date - FirstMet.Date).Days + 1; } }
+        public bool Hungry { get { return (DateTime.Now - LastFed).TotalHours >= 6; } }
 
         public static Memory Load(out bool isNew)
         {
@@ -74,11 +70,15 @@ namespace LuckyPet
                     {
                         case "first_met": m.FirstMet = DateTime.Parse(v, CI, DateTimeStyles.RoundtripKind); break;
                         case "last_seen": m.LastSeen = DateTime.Parse(v, CI, DateTimeStyles.RoundtripKind); break;
+                        case "last_fed": m.LastFed = DateTime.Parse(v, CI, DateTimeStyles.RoundtripKind); break;
                         case "pets": m.Pets = int.Parse(v, CI); break;
                         case "chases": m.Chases = int.Parse(v, CI); break;
                         case "reminders": m.Reminders = int.Parse(v, CI); break;
                         case "naps": m.Naps = int.Parse(v, CI); break;
                         case "drops": m.Drops = int.Parse(v, CI); break;
+                        case "balls": m.Balls = int.Parse(v, CI); break;
+                        case "treats": m.Treats = int.Parse(v, CI); break;
+                        case "focus_sessions": m.FocusSessions = int.Parse(v, CI); break;
                         case "day_milestone": m.DayMilestone = int.Parse(v, CI); break;
                         case "pet_milestone": m.PetMilestone = int.Parse(v, CI); break;
                         case "affection": m.Affection = Math.Max(0, Math.Min(100, double.Parse(v, CI))); break;
@@ -86,9 +86,11 @@ namespace LuckyPet
                         case "facing": m.Facing = int.Parse(v, CI) < 0 ? -1 : 1; break;
                         case "remind_on": m.RemindOn = v == "true"; break;
                         case "size": m.Size = Math.Max(0.6f, Math.Min(2.5f, float.Parse(v, CI))); break;
+                        case "last_morning": m.LastMorning = v; break;
+                        case "last_night": m.LastNight = v; break;
                     }
                 }
-                catch { /* ignore a bad line, keep the rest */ }
+                catch { }
             }
             return m;
         }
@@ -100,31 +102,36 @@ namespace LuckyPet
             sb.AppendLine("# Lucky's memory 🐾  (plain text, safe to read; edit while Lucky is closed)");
             sb.AppendLine("first_met=" + FirstMet.ToString("o", CI));
             sb.AppendLine("last_seen=" + LastSeen.ToString("o", CI));
+            sb.AppendLine("last_fed=" + LastFed.ToString("o", CI));
             sb.AppendLine("affection=" + Affection.ToString("0.00", CI));
             sb.AppendLine("pets=" + Pets.ToString(CI));
             sb.AppendLine("chases=" + Chases.ToString(CI));
+            sb.AppendLine("balls=" + Balls.ToString(CI));
+            sb.AppendLine("treats=" + Treats.ToString(CI));
             sb.AppendLine("naps=" + Naps.ToString(CI));
             sb.AppendLine("drops=" + Drops.ToString(CI));
             sb.AppendLine("reminders=" + Reminders.ToString(CI));
+            sb.AppendLine("focus_sessions=" + FocusSessions.ToString(CI));
             sb.AppendLine("day_milestone=" + DayMilestone.ToString(CI));
             sb.AppendLine("pet_milestone=" + PetMilestone.ToString(CI));
             sb.AppendLine("pos_x=" + PosX.ToString("0", CI));
             sb.AppendLine("facing=" + Facing.ToString(CI));
             sb.AppendLine("remind_on=" + (RemindOn ? "true" : "false"));
             sb.AppendLine("size=" + Size.ToString("0.00", CI));
+            sb.AppendLine("last_morning=" + LastMorning);
+            sb.AppendLine("last_night=" + LastNight);
             string tmp = FilePath + ".tmp";
             File.WriteAllText(tmp, sb.ToString(), new UTF8Encoding(false));
             if (File.Exists(FilePath)) File.Replace(tmp, FilePath, null); else File.Move(tmp, FilePath);
         }
     }
 
-    class PetForm : Form
+    // ================================================================ per-pixel-alpha window
+    class LayerWin : Form
     {
-        // ---------- Win32 ----------
         [StructLayout(LayoutKind.Sequential)] struct POINT { public int x, y; public POINT(int a, int b) { x = a; y = b; } }
         [StructLayout(LayoutKind.Sequential)] struct SIZE { public int cx, cy; public SIZE(int a, int b) { cx = a; cy = b; } }
         [StructLayout(LayoutKind.Sequential, Pack = 1)] struct BLENDFUNCTION { public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat; }
-        [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
         [DllImport("user32.dll")] static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref POINT pptDst, ref SIZE psize, IntPtr hdcSrc, ref POINT pprSrc, int crKey, ref BLENDFUNCTION pblend, int dwFlags);
         [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr h);
         [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr dc);
@@ -132,124 +139,99 @@ namespace LuckyPet
         [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
         [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr o);
         [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr o);
-        [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
-        [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
-        [DllImport("user32.dll")] static extern IntPtr GetShellWindow();
-        [DllImport("user32.dll", CharSet = CharSet.Auto)] static extern int GetClassName(IntPtr h, System.Text.StringBuilder sb, int n);
-        [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr h);
 
-        // ---------- state ----------
-        const int CW = 130, CH = 120;          // logical canvas; ground line at y = 116
-        const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-        const int RemindMinutes = 45;
-        static readonly int[] DayMilestones = { 3, 7, 30, 100, 365 };
-        static readonly int[] PetMilestones = { 10, 50, 100, 500, 1000 };
-        float S, dpiScale = 1; int PW, PH;
-        Bitmap canvas, petLayer, petSmall;
-        const int SS = 2; // supersampling factor
-        System.Drawing.Imaging.ImageAttributes whiteAttr;
-        Timer timer;
-        Random rnd = new Random();
-        St st = St.Sit;
-        double x, y, vy;
-        int dir = 1, stateTicks = 60, frame = 0, fsCheck = 0;
-        bool dragging, moved, hiddenFs, remindOn = true, dirty;
-        Point dragOff, downPt;
-        NotifyIcon tray;
-        DateTime nextRemind, lastSave = DateTime.Now, lastDecay = DateTime.Now;
-        Memory mem;
-        string pendingTitle, pendingText;
-
-        // Husky palette (water-element friendly: grey-blue, white, blue eyes)
-        static readonly Color FurDark = Color.FromArgb(62, 74, 106), FurMid = Color.FromArgb(116, 132, 166), FurLight = Color.FromArgb(182, 196, 222),
-            White = Color.FromArgb(253, 254, 255), WhiteShade = Color.FromArgb(204, 214, 234), Line = Color.FromArgb(175, 42, 50, 80),
-            Rim = Color.FromArgb(150, 205, 232, 255),
-            EarIn1 = Color.FromArgb(255, 212, 226), EarIn2 = Color.FromArgb(224, 156, 188),
-            IrisTop = Color.FromArgb(22, 58, 138), Iris2 = Color.FromArgb(52, 136, 232), Iris1 = Color.FromArgb(156, 222, 255),
-            NoseC = Color.FromArgb(32, 36, 50), Tongue1 = Color.FromArgb(255, 164, 184), Tongue2 = Color.FromArgb(226, 88, 122),
-            Collar1 = Color.FromArgb(150, 244, 240), Collar2 = Color.FromArgb(28, 158, 196), TagColor = Color.FromArgb(170, 184, 210);
-
+        public LayerWin() { FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; StartPosition = FormStartPosition.Manual; }
         protected override CreateParams CreateParams
         {
             get { var cp = base.CreateParams; cp.ExStyle |= 0x80000 | 0x80 | 0x8; return cp; } // layered | toolwindow | topmost
         }
         protected override bool ShowWithoutActivation { get { return true; } }
 
-        // Offline renderer for README screenshots / visual checks (no tray, no memory writes).
-        public PetForm(bool snapshotOnly)
+        public void Push(Bitmap bmp, int x, int y)
         {
-            mem = new Memory(); mem.Affection = 90;
-            timer = new Timer();
-            S = 2; Alloc();
+            IntPtr screenDc = GetDC(IntPtr.Zero), memDc = CreateCompatibleDC(screenDc);
+            IntPtr hb = bmp.GetHbitmap(Color.FromArgb(0)), old = SelectObject(memDc, hb);
+            var size = new SIZE(bmp.Width, bmp.Height); var src = new POINT(0, 0); var dst = new POINT(x, y);
+            var bf = new BLENDFUNCTION { BlendOp = 0, BlendFlags = 0, SourceConstantAlpha = 255, AlphaFormat = 1 };
+            UpdateLayeredWindow(Handle, screenDc, ref dst, ref size, memDc, ref src, 0, ref bf, 2);
+            SelectObject(memDc, old); DeleteObject(hb); DeleteDC(memDc); ReleaseDC(IntPtr.Zero, screenDc);
         }
+    }
 
-        public void Snapshot(string path)
-        {
-            var poses = new[] { St.Walk, St.Sit, St.Happy, St.Chase, St.Sleep, St.Remind };
-            using (var sheet = new Bitmap(PW * poses.Length, PH))
-            using (var g = Graphics.FromImage(sheet))
-            {
-                g.Clear(Color.FromArgb(16, 30, 66));
-                y = Ground();
-                for (int i = 0; i < poses.Length; i++)
-                {
-                    st = poses[i]; frame = 20; dir = 1;
-                    RenderFrame();
-                    g.DrawImageUnscaled(canvas, i * PW, 0);
-                }
-                sheet.Save(path, System.Drawing.Imaging.ImageFormat.Png);
-            }
-        }
+    // ================================================================ the pet
+    class PetForm : LayerWin
+    {
+        [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
+        [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+        [DllImport("user32.dll")] static extern IntPtr GetShellWindow();
+        [DllImport("user32.dll", CharSet = CharSet.Auto)] static extern int GetClassName(IntPtr h, StringBuilder sb, int n);
+        [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr h);
 
-        void Alloc()
-        {
-            PW = (int)(CW * S); PH = (int)(CH * S);
-            if (canvas != null) canvas.Dispose();
-            if (petLayer != null) petLayer.Dispose();
-            if (petSmall != null) petSmall.Dispose();
-            canvas = new Bitmap(PW, PH, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            petLayer = new Bitmap(PW * SS, PH * SS, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
-            petSmall = new Bitmap(PW, PH, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
-            if (whiteAttr == null)
-            {
-                // Paint every pixel near-white while keeping its alpha -> used for the sticker outline
-                var cm = new System.Drawing.Imaging.ColorMatrix(new float[][] {
-                    new float[] { 0, 0, 0, 0, 0 }, new float[] { 0, 0, 0, 0, 0 }, new float[] { 0, 0, 0, 0, 0 },
-                    new float[] { 0, 0, 0, 1, 0 }, new float[] { 0.95f, 0.97f, 1, 0, 1 } });
-                whiteAttr = new System.Drawing.Imaging.ImageAttributes();
-                whiteAttr.SetColorMatrix(cm);
-            }
-        }
+        const int CW = 130, CH = 120, SPRITE_W = 260;      // logical canvas; sprites stored at 2x
+        const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        const int RemindMinutes = 45, FocusMinutes = 25;
+        static readonly string[] AnimNames = { "walk", "run", "happy", "sit", "sitblink", "sithappy", "sleep", "eat" };
+        static readonly int[] DayMilestones = { 3, 7, 30, 100, 365 };
+        static readonly int[] PetMilestones = { 10, 50, 100, 500, 1000 };
+        static readonly string[] Cheers = {
+            "Gâu! Hôm nay bạn sẽ gặp may đó ✦", "Bạn đang làm rất tốt luôn!", "Nghỉ mắt 20 giây, nhìn ra xa nha",
+            "Lucky thương bạn nhiều ♥", "Uống ngụm nước đi nè", "Cố lên, sắp xong rồi!",
+            "Thẳng lưng lên nào, ngồi đúng tư thế nha", "Việc khó cỡ nào cũng có Lucky ở đây",
+            "Hít thở sâu 3 lần nào…", "Ném bóng cho Lucky chơi hông?" };
+        static readonly string[] PetLines = { "Gâu gâu! ♥", "Thêm cái nữa đi!", "Hì hì, nhột quá", "Lucky vui lắm!", "Bạn là nhất ♥" };
 
-        void SetSize(float z)
-        {
-            mem.Size = z; dirty = true;
-            S = dpiScale * z; Alloc();
-            var wa = Screen.PrimaryScreen.WorkingArea;
-            x = Math.Max(wa.Left, Math.Min(wa.Right - PW, x));
-            y = Ground();
-            Render();
-        }
+        float S, dpiScale = 1; int PW, PH;
+        Bitmap canvas;
+        Dictionary<string, Bitmap[]> sprR = new Dictionary<string, Bitmap[]>(), sprL = new Dictionary<string, Bitmap[]>();
+        Timer timer;
+        Random rnd = new Random();
+        St st = St.Sit;
+        double x, y, vy;
+        int dir = 1, stateTicks = 60, frame = 0, fsCheck = 0, animStart = Environment.TickCount, blinkUntil = 0;
+        bool dragging, moved, hiddenFs, remindOn = true, dirty;
+        Point dragOff, downPt;
+        NotifyIcon tray;
+        ToolStripMenuItem focusItem;
+        DateTime nextRemind, nextChat, lastSave = DateTime.Now, lastDecay = DateTime.Now, lastClock = DateTime.MinValue, focusEnd;
+        Memory mem;
+        string pendingTitle, pendingText;
+
+        // toys & speech
+        LayerWin ballWin, boneWin, bubbleWin;
+        bool ballActive, ballCarried; double bx, by, bvx, bvy, bRot; int ballIdleSince;
+        bool boneActive; double boneX, boneY, boneVy; int boneBites;
+        int eatStart;
+        string bubbleText; int bubbleUntil;
 
         public PetForm()
         {
-            FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; StartPosition = FormStartPosition.Manual;
             using (var g = Graphics.FromHwnd(IntPtr.Zero)) dpiScale = g.DpiX / 96f;
             bool isNew;
             mem = Memory.Load(out isNew);
-            S = dpiScale * mem.Size;
-            Alloc();
             remindOn = mem.RemindOn;
             dir = mem.Facing;
+            S = dpiScale * mem.Size;
+            Alloc();
             var wa = Screen.PrimaryScreen.WorkingArea;
             x = mem.PosX >= 0 ? Math.Max(wa.Left, Math.Min(wa.Right - PW, mem.PosX)) : wa.Left + wa.Width * 0.72;
             y = Ground();
             Size = new Size(PW, PH); Location = new Point((int)x, (int)y);
             Greet(isNew);
 
+            ballWin = new LayerWin(); boneWin = new LayerWin(); bubbleWin = new LayerWin();
+            ballWin.MouseDown += delegate { KickBall(); };
+            bubbleWin.MouseDown += delegate { bubbleUntil = 0; };
+
             var menu = new ContextMenuStrip();
             menu.Items.Add("Xoa đầu Lucky 💕", null, delegate { Pet(); });
+            menu.Items.Add("Ném bóng 🎾", null, delegate { ThrowBall(true); });
+            menu.Items.Add("Cho ăn xương 🦴", null, delegate { DropBone(); });
+            focusItem = new ToolStripMenuItem("Tập trung 25 phút 🎯");
+            focusItem.Click += delegate { ToggleFocus(); };
+            menu.Items.Add(focusItem);
             menu.Items.Add("Kỷ niệm với Lucky 📖", null, delegate { ShowMemories(); });
+            menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Cho Lucky đi ngủ 💤", null, delegate { SetState(St.Sleep, 1200); });
             menu.Items.Add("Đánh thức Lucky", null, delegate { SetState(St.Walk, 150); });
             var sizeMenu = new ToolStripMenuItem("Kích thước");
@@ -279,23 +261,88 @@ namespace LuckyPet
             UpdateTooltip();
 
             MouseDown += OnDown; MouseMove += OnMove; MouseUp += OnUp;
+            DoubleClick += delegate { ThrowBall(false); };
             SystemEvents.SessionEnding += delegate { SaveMem(); };
             nextRemind = DateTime.Now.AddMinutes(RemindMinutes);
-            timer = new Timer { Interval = 33 };
+            nextChat = DateTime.Now.AddMinutes(rnd.Next(12, 25));
+            timer = new Timer { Interval = 40 };
             timer.Tick += Tick;
             timer.Start();
-            SetState(St.Happy, 70); // say hi
+            SetState(St.Happy, 60);
         }
 
-        // ---------- memory-driven behaviour ----------
+        // ---------------------------------------------------------- sprites
+        void Alloc()
+        {
+            PW = (int)(CW * S); PH = (int)(CH * S);
+            if (canvas != null) canvas.Dispose();
+            canvas = new Bitmap(PW, PH, PixelFormat.Format32bppArgb);
+            foreach (var arr in sprR.Values) foreach (var b in arr) b.Dispose();
+            foreach (var arr in sprL.Values) foreach (var b in arr) b.Dispose();
+            sprR.Clear(); sprL.Clear();
+            var asm = Assembly.GetExecutingAssembly();
+            using (var ia = new ImageAttributes())
+            {
+                ia.SetWrapMode(WrapMode.TileFlipXY);
+                foreach (var n in AnimNames)
+                {
+                    using (var s = asm.GetManifestResourceStream(n + ".png"))
+                    using (var sheet = new Bitmap(s))
+                    {
+                        int cnt = sheet.Width / SPRITE_W;
+                        var r = new Bitmap[cnt]; var l = new Bitmap[cnt];
+                        for (int i = 0; i < cnt; i++)
+                        {
+                            var b = new Bitmap(PW, PH, PixelFormat.Format32bppPArgb);
+                            using (var g = Graphics.FromImage(b))
+                            {
+                                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                                g.CompositingQuality = CompositingQuality.HighQuality;
+                                g.DrawImage(sheet, new Rectangle(0, 0, PW, PH), i * SPRITE_W, 0, SPRITE_W, sheet.Height, GraphicsUnit.Pixel, ia);
+                            }
+                            r[i] = b;
+                            var f = (Bitmap)b.Clone(); f.RotateFlip(RotateFlipType.RotateNoneFlipX); l[i] = f;
+                        }
+                        sprR[n] = r; sprL[n] = l;
+                    }
+                }
+            }
+            GC.Collect();
+        }
+
+        void SetSize(float z)
+        {
+            mem.Size = z; dirty = true;
+            S = dpiScale * z; Alloc();
+            var wa = Screen.PrimaryScreen.WorkingArea;
+            x = Math.Max(wa.Left, Math.Min(wa.Right - PW, x));
+            y = Ground();
+            Render();
+        }
+
+        string Anim(out int fps)
+        {
+            switch (st)
+            {
+                case St.Walk: fps = 10; return "walk";
+                case St.Chase: case St.Fetch: case St.Carry: case St.GoEat: fps = 14; return "run";
+                case St.Happy: case St.Drag: case St.Fall: fps = 12; return "happy";
+                case St.Remind: fps = 8; return "sithappy";
+                case St.Sleep: case St.Focus: fps = 4; return "sleep";
+                case St.Eat: fps = 6; return "eat";
+                default: fps = 6; return Environment.TickCount < blinkUntil ? "sitblink" : "sit";
+            }
+        }
+
+        // ---------------------------------------------------------- memory-driven behaviour
         void Greet(bool isNew)
         {
             if (isNew)
             {
                 pendingTitle = "Gâu! Mình là Lucky 🐶";
-                pendingText = "Từ hôm nay mình sẽ ở trên taskbar với bạn. Click để xoa đầu mình nhé!";
-                dirty = true;
-                return;
+                pendingText = "Từ hôm nay mình sẽ ở trên taskbar với bạn. Click để xoa đầu, nhấp đúp để ném bóng nhé!";
+                dirty = true; return;
             }
             TimeSpan away = DateTime.Now - mem.LastSeen;
             if (away.TotalHours >= 12)
@@ -328,21 +375,27 @@ namespace LuckyPet
                 }
             dirty = true;
             UpdateTooltip();
-            SetState(St.Happy, 70);
+            if (st == St.Focus) return;
+            if (rnd.Next(4) == 0) Say(PetLines[rnd.Next(PetLines.Length)], 2500);
+            if (st != St.Carry && st != St.Eat && st != St.GoEat && st != St.Fetch) SetState(St.Happy, 60);
         }
 
         void ShowMemories()
         {
             int aff = (int)Math.Round(mem.Affection);
             string bar = new string('♥', aff / 20) + new string('♡', 5 - aff / 20);
+            string fed = mem.Hungry ? "đang đói 🥺" : "no bụng 😋";
             string text =
                 "🐶  Lucky – chú Husky của bạn\n\n" +
                 "📅  Gặp nhau từ: " + mem.FirstMet.ToString("dd/MM/yyyy") + "  (" + mem.DaysTogether + " ngày)\n" +
-                "💞  Độ thân thiết: " + bar + "  " + aff + "%\n\n" +
+                "💞  Độ thân thiết: " + bar + "  " + aff + "%\n" +
+                "🍖  Bụng: " + fed + "\n\n" +
                 "🤚  Được xoa đầu: " + mem.Pets + " lần\n" +
+                "🎾  Nhặt bóng: " + mem.Balls + " lần\n" +
+                "🦴  Ăn xương: " + mem.Treats + " cái\n" +
                 "🏃  Đuổi theo chuột: " + mem.Chases + " lần\n" +
+                "🎯  Phiên tập trung: " + mem.FocusSessions + "\n" +
                 "💤  Giấc ngủ: " + mem.Naps + " lần\n" +
-                "🪂  Bị thả rơi: " + mem.Drops + " lần\n" +
                 "💧  Nhắc uống nước: " + mem.Reminders + " lần\n\n" +
                 "Trí nhớ được lưu ở:\n" + Memory.FilePath;
             MessageBox.Show(text, "Kỷ niệm với Lucky", MessageBoxButtons.OK, MessageBoxIcon.None);
@@ -351,7 +404,9 @@ namespace LuckyPet
         void UpdateTooltip()
         {
             if (tray == null) return;
-            string t = "Lucky 🐾 ♥ " + (int)Math.Round(mem.Affection) + "% · bên nhau " + mem.DaysTogether + " ngày";
+            string t;
+            if (st == St.Focus) t = "Lucky 🎯 tập trung · còn " + Math.Max(0, (int)Math.Ceiling((focusEnd - DateTime.Now).TotalMinutes)) + " phút";
+            else t = "Lucky ♥ " + (int)Math.Round(mem.Affection) + "% · " + mem.DaysTogether + " ngày" + (mem.Hungry ? " · đói bụng" : "");
             tray.Text = t.Length > 63 ? t.Substring(0, 63) : t;
         }
 
@@ -366,25 +421,193 @@ namespace LuckyPet
 
         void SetState(St s, int ticks)
         {
+            if (st == St.Focus && s != St.Focus && DateTime.Now < focusEnd) return; // stay calm while focusing
             if (s == St.Sleep && st != St.Sleep) { mem.Naps++; dirty = true; }
             if (s == St.Chase) { mem.Chases++; mem.Affection = Math.Min(100, mem.Affection + 0.5); dirty = true; }
+            if (s != st) animStart = Environment.TickCount;
             st = s; stateTicks = ticks;
-            if (s == St.Happy && y >= Ground() - 1) vy = -7 * S;
-            if (s == St.Fall) vy = 0;
-            timer.Interval = (s == St.Sleep || s == St.Sit) ? 70 : 40;
+            if (s == St.Happy && y >= Ground() - 1) vy = -6 * S;
+            timer.Interval = (s == St.Sleep || s == St.Sit || s == St.Focus || s == St.Eat) ? 80 : 40;
         }
 
         void NextRandomState()
         {
             if (st == St.Sleep) { SetState(St.Sit, 60); return; }
+            if (ballActive && !ballCarried) { SetState(St.Fetch, 400); return; }
+            if (boneActive) { SetState(St.GoEat, 400); return; }
             int r = rnd.Next(100);
             bool lonely = mem.Affection < 30;
-            if (r < (lonely ? 40 : 55)) { dir = rnd.Next(2) == 0 ? -1 : 1; SetState(St.Walk, rnd.Next(90, 300)); }
-            else if (r < (lonely ? 70 : 87)) SetState(St.Sit, rnd.Next(60, 160));
-            else SetState(St.Sleep, rnd.Next(300, 900));
+            if (r < (lonely ? 40 : 55)) { dir = rnd.Next(2) == 0 ? -1 : 1; SetState(St.Walk, rnd.Next(70, 220)); }
+            else if (r < (lonely ? 70 : 87))
+            {
+                SetState(St.Sit, rnd.Next(50, 130));
+                if (mem.Hungry && rnd.Next(3) == 0) Say("Lucky đói bụng quá… cho Lucky cục xương nha", 4000);
+            }
+            else SetState(St.Sleep, rnd.Next(250, 700));
         }
 
-        // ---------- input ----------
+        // ---------------------------------------------------------- toys
+        double MouthX(double mouthLogical) { return x + (dir > 0 ? mouthLogical : CW - mouthLogical) * S; }
+        float BallR { get { return 5.5f * S; } }
+
+        void ThrowBall(bool fromCursor)
+        {
+            if (st == St.Focus) { Say("Đang tập trung mà, lát chơi nha ♥", 2500); return; }
+            var wa = Screen.PrimaryScreen.WorkingArea;
+            var c = Cursor.Position;
+            if (fromCursor && c.Y < wa.Bottom - 10) { bx = c.X; by = Math.Min(c.Y, wa.Bottom - BallR); }
+            else { bx = MouthX(115); by = y + 60 * S; }
+            double speed = (6 + rnd.NextDouble() * 7) * S;
+            bvx = fromCursor ? (rnd.Next(2) == 0 ? -speed : speed) : -dir * speed;
+            bvy = -9 * S;
+            ballActive = true; ballCarried = false; ballIdleSince = Environment.TickCount;
+            ballWin.Show();
+            SetState(St.Fetch, 600);
+        }
+
+        void KickBall()
+        {
+            if (!ballActive || ballCarried) return;
+            bvx = (rnd.Next(2) == 0 ? -1 : 1) * (7 + rnd.NextDouble() * 6) * S; bvy = -10 * S;
+            ballIdleSince = Environment.TickCount;
+            if (st != St.Focus) SetState(St.Fetch, 600);
+        }
+
+        void StepBall()
+        {
+            if (!ballActive || ballCarried) return;
+            var wa = Screen.PrimaryScreen.WorkingArea;
+            double gy = wa.Bottom - BallR;
+            bvy += 0.9 * S; bx += bvx; by += bvy;
+            bRot += bvx / BallR;
+            if (by >= gy) { by = gy; if (Math.Abs(bvy) > 2.5 * S) bvy = -bvy * 0.55; else bvy = 0; bvx *= 0.97; }
+            if (bx < wa.Left + BallR) { bx = wa.Left + BallR; bvx = Math.Abs(bvx) * 0.7; }
+            if (bx > wa.Right - BallR) { bx = wa.Right - BallR; bvx = -Math.Abs(bvx) * 0.7; }
+            if (Math.Abs(bvx) < 0.05) bvx = 0;
+            if (st != St.Fetch && Environment.TickCount - ballIdleSince > 45000) { ballActive = false; ballWin.Hide(); return; }
+            int sz = (int)(BallR * 2 + 4);
+            using (var bmp = new Bitmap(sz, sz, PixelFormat.Format32bppArgb))
+            {
+                using (var g = Graphics.FromImage(bmp)) { g.SmoothingMode = SmoothingMode.AntiAlias; DrawBall(g, sz / 2f, sz / 2f, BallR, (float)bRot); }
+                ballWin.Push(bmp, (int)(bx - sz / 2.0), (int)(by - sz / 2.0));
+            }
+        }
+
+        void DropBone()
+        {
+            if (st == St.Focus) { Say("Tập trung xong rồi Lucky ăn sau nha", 2500); return; }
+            var wa = Screen.PrimaryScreen.WorkingArea;
+            boneX = MouthX(150); boneX = Math.Max(wa.Left + 30 * S, Math.Min(wa.Right - 30 * S, boneX));
+            boneY = wa.Bottom - 160 * S; boneVy = 0; boneBites = 0; boneActive = true;
+            boneWin.Show();
+            SetState(St.GoEat, 600);
+        }
+
+        void StepBone()
+        {
+            if (!boneActive) return;
+            var wa = Screen.PrimaryScreen.WorkingArea;
+            double gy = wa.Bottom - 4 * S;
+            if (boneY < gy) { boneVy += 0.9 * S; boneY = Math.Min(gy, boneY + boneVy); }
+            int w = (int)(30 * S), h = (int)(16 * S);
+            using (var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb))
+            {
+                using (var g = Graphics.FromImage(bmp)) { g.SmoothingMode = SmoothingMode.AntiAlias; DrawBone(g, w / 2f, h / 2f, S, boneBites); }
+                boneWin.Push(bmp, (int)(boneX - w / 2.0), (int)(boneY - h + 2 * S));
+            }
+        }
+
+        // ---------------------------------------------------------- focus / speech / clock
+        void ToggleFocus()
+        {
+            if (st == St.Focus)
+            {
+                focusEnd = DateTime.Now; SetState(St.Sit, 60);
+                focusItem.Text = "Tập trung 25 phút 🎯"; Say("Dừng tập trung rồi nè", 2000); UpdateTooltip(); return;
+            }
+            if (ballActive) { ballActive = false; ballCarried = false; ballWin.Hide(); }
+            if (boneActive) { boneActive = false; boneWin.Hide(); }
+            focusEnd = DateTime.Now.AddMinutes(FocusMinutes);
+            SetState(St.Focus, int.MaxValue);
+            focusItem.Text = "Dừng tập trung";
+            Say("Bắt đầu 25 phút tập trung! Lucky sẽ nằm im ♥", 3500);
+            UpdateTooltip();
+        }
+
+        void Say(string text, int ms)
+        {
+            bubbleText = text; bubbleUntil = Environment.TickCount + ms;
+            if (!hiddenFs) bubbleWin.Show();
+        }
+
+        void StepBubble()
+        {
+            if (bubbleText == null) return;
+            if (Environment.TickCount > bubbleUntil) { bubbleText = null; bubbleWin.Hide(); return; }
+            using (var f = new Font("Segoe UI", 9f))
+            {
+                var flags = TextFormatFlags.WordBreak | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding;
+                int maxW = (int)(150 * dpiScale);
+                var ts = TextRenderer.MeasureText(bubbleText, f, new Size(maxW, 1000), flags);
+                int pad = (int)(8 * dpiScale), tail = (int)(7 * dpiScale);
+                int w = ts.Width + pad * 2, h = ts.Height + pad * 2;
+                using (var opaque = new Bitmap(w, h + tail, PixelFormat.Format32bppArgb))
+                using (var outBmp = new Bitmap(w, h + tail, PixelFormat.Format32bppArgb))
+                {
+                    using (var g = Graphics.FromImage(opaque))
+                    {
+                        g.Clear(Color.FromArgb(250, 252, 255));
+                        TextRenderer.DrawText(g, bubbleText, f, new Rectangle(pad, pad, ts.Width, ts.Height), Color.FromArgb(40, 52, 84), Color.FromArgb(250, 252, 255), flags);
+                    }
+                    using (var g = Graphics.FromImage(outBmp))
+                    using (var path = Bubble(0.75f, 0.75f, w - 1.5f, h - 1.5f, 10 * dpiScale, tail))
+                    {
+                        g.SmoothingMode = SmoothingMode.AntiAlias;
+                        g.SetClip(path);
+                        g.DrawImageUnscaled(opaque, 0, 0);
+                        g.ResetClip();
+                        using (var p = new Pen(Color.FromArgb(90, 200, 220), 1.5f * dpiScale)) g.DrawPath(p, path);
+                    }
+                    var wa = Screen.PrimaryScreen.WorkingArea;
+                    int hx = (int)MouthX(80);
+                    int bxp = Math.Max(wa.Left, Math.Min(wa.Right - w, hx - w / 2));
+                    int byp = (int)(y + 8 * S) - (h + tail);
+                    bubbleWin.Push(outBmp, bxp, byp);
+                }
+            }
+        }
+
+        static GraphicsPath Bubble(float x, float y, float w, float h, float r, float tail)
+        {
+            var p = new GraphicsPath();
+            p.AddArc(x, y, r * 2, r * 2, 180, 90); p.AddArc(x + w - r * 2, y, r * 2, r * 2, 270, 90);
+            p.AddArc(x + w - r * 2, y + h - r * 2, r * 2, r * 2, 0, 90);
+            p.AddLine(x + w / 2 + tail, y + h, x + w / 2, y + h + tail);
+            p.AddLine(x + w / 2, y + h + tail, x + w / 2 - tail, y + h);
+            p.AddArc(x, y + h - r * 2, r * 2, r * 2, 90, 90);
+            p.CloseFigure(); return p;
+        }
+
+        void ClockChecks()
+        {
+            var now = DateTime.Now; string today = now.ToString("yyyy-MM-dd");
+            if (now.Hour >= 5 && now.Hour < 11 && mem.LastMorning != today)
+            {
+                mem.LastMorning = today; dirty = true;
+                Say("Chào buổi sáng ☀ Chúc bạn một ngày thật may mắn!", 6000);
+                SetState(St.Happy, 60);
+            }
+            bool late = now.Hour >= 23 || now.Hour < 4;
+            string nightKey = (now.Hour < 4 ? now.AddDays(-1) : now).ToString("yyyy-MM-dd");
+            if (late && mem.LastNight != nightKey && st != St.Focus)
+            {
+                mem.LastNight = nightKey; dirty = true;
+                Say("Khuya rồi… đi ngủ sớm cho khoẻ nha ☾", 7000);
+                SetState(St.Sleep, 1500);
+            }
+        }
+
+        // ---------------------------------------------------------- input
         void OnDown(object s, MouseEventArgs e)
         {
             if (e.Button != MouseButtons.Left) return;
@@ -395,44 +618,78 @@ namespace LuckyPet
         {
             if (!dragging) return;
             var c = Cursor.Position;
-            if (!moved && (Math.Abs(c.X - downPt.X) > 4 || Math.Abs(c.Y - downPt.Y) > 4)) { moved = true; SetState(St.Drag, 1); }
+            if (!moved && (Math.Abs(c.X - downPt.X) > 4 || Math.Abs(c.Y - downPt.Y) > 4))
+            {
+                moved = true;
+                if (ballCarried) DropCarriedBall(false);
+                if (st == St.Focus) { focusEnd = DateTime.Now; focusItem.Text = "Tập trung 25 phút 🎯"; }
+                st = St.Drag; animStart = Environment.TickCount; timer.Interval = 40;
+            }
             if (moved) { x = c.X - dragOff.X; y = c.Y - dragOff.Y; }
         }
         void OnUp(object s, MouseEventArgs e)
         {
             if (!dragging) return;
             dragging = false;
-            if (moved) { mem.Drops++; dirty = true; SetState(St.Fall, 1); } else Pet();
+            if (moved) { mem.Drops++; dirty = true; st = St.Fall; vy = 0; animStart = Environment.TickCount; }
+            else Pet();
         }
 
-        // ---------- main loop ----------
+        void DropCarriedBall(bool proud)
+        {
+            ballCarried = false;
+            bx = MouthX(117); by = y + 71 * S; bvx = dir * 2 * S; bvy = -2 * S;
+            ballIdleSince = Environment.TickCount;
+            ballWin.Show();
+            if (proud)
+            {
+                mem.Balls++; mem.Affection = Math.Min(100, mem.Affection + 2); dirty = true;
+                if (rnd.Next(2) == 0) Say("Nữa đi! Ném nữa đi! ♥", 2500);
+                SetState(St.Remind, 50); // happy sitting wag
+            }
+        }
+
+        // ---------------------------------------------------------- main loop
         void Tick(object sender, EventArgs e)
         {
             frame++;
-            if (frame == 25 && pendingTitle != null) { tray.ShowBalloonTip(7000, pendingTitle, pendingText, ToolTipIcon.None); pendingTitle = null; }
-            if ((DateTime.Now - lastDecay).TotalMinutes >= 1)
-            {
-                lastDecay = DateTime.Now;
-                mem.Affection = Math.Max(0, mem.Affection - 0.02);
-                UpdateTooltip();
-            }
-            if ((dirty && (DateTime.Now - lastSave).TotalSeconds > 30) || (DateTime.Now - lastSave).TotalMinutes > 5) SaveMem();
+            if (frame == 20 && pendingTitle != null) { tray.ShowBalloonTip(7000, pendingTitle, pendingText, ToolTipIcon.None); pendingTitle = null; }
+            var now = DateTime.Now;
+            if ((now - lastDecay).TotalMinutes >= 1) { lastDecay = now; mem.Affection = Math.Max(0, mem.Affection - 0.02); UpdateTooltip(); }
+            if ((now - lastClock).TotalSeconds >= 30) { lastClock = now; ClockChecks(); }
+            if ((dirty && (now - lastSave).TotalSeconds > 30) || (now - lastSave).TotalMinutes > 5) SaveMem();
 
-            if (++fsCheck >= 30)
+            if (++fsCheck >= 25)
             {
                 fsCheck = 0;
                 bool fs = IsFullscreenApp();
-                if (fs && !hiddenFs) { hiddenFs = true; Hide(); }
-                else if (!fs && hiddenFs) { hiddenFs = false; Show(); }
+                if (fs && !hiddenFs) { hiddenFs = true; Hide(); ballWin.Hide(); boneWin.Hide(); bubbleWin.Hide(); }
+                else if (!fs && hiddenFs) { hiddenFs = false; Show(); if (ballActive && !ballCarried) ballWin.Show(); if (boneActive) boneWin.Show(); }
             }
             if (hiddenFs) return;
 
-            if (remindOn && DateTime.Now >= nextRemind && st != St.Drag)
+            if (st == St.Focus && now >= focusEnd)
             {
-                nextRemind = DateTime.Now.AddMinutes(RemindMinutes);
+                mem.FocusSessions++; dirty = true;
+                focusItem.Text = "Tập trung 25 phút 🎯";
+                SetState(St.Happy, 60);
+                tray.ShowBalloonTip(7000, "Xong 25 phút rồi! 🎉", "Bạn giỏi quá. Đứng dậy nghỉ 5 phút, uống nước nha!", ToolTipIcon.None);
+                Say("Xong rồi! Nghỉ 5 phút nha ☕", 6000);
+            }
+            if (st == St.Focus && frame % 250 == 0) UpdateTooltip();
+
+            if (remindOn && now >= nextRemind && st != St.Drag && st != St.Focus)
+            {
+                nextRemind = now.AddMinutes(RemindMinutes);
                 mem.Reminders++; dirty = true;
-                SetState(St.Remind, 260);
+                SetState(St.Remind, 200);
+                Say("Uống một ngụm nước và vươn vai nha!", 7000);
                 tray.ShowBalloonTip(7000, "Lucky nhắc nè 💧", "Uống một ngụm nước và đứng dậy vươn vai 1 phút nhé!", ToolTipIcon.None);
+            }
+            if (now >= nextChat)
+            {
+                nextChat = now.AddMinutes(rnd.Next(20, 36));
+                if (st != St.Focus && st != St.Sleep) Say(Cheers[rnd.Next(Cheers.Length)], 6000);
             }
 
             var wa = Screen.PrimaryScreen.WorkingArea;
@@ -443,23 +700,60 @@ namespace LuckyPet
             {
                 case St.Walk:
                     x += dir * 1.7 * S;
-                    if (Math.Abs(cur.X - (x + PW / 2.0)) < 230 * S && cur.Y > g - 120 * S && rnd.Next(chaseOdds) == 0) SetState(St.Chase, 220);
+                    if (Math.Abs(cur.X - (x + PW / 2.0)) < 230 * S && cur.Y > g - 120 * S && rnd.Next(chaseOdds) == 0) SetState(St.Chase, 200);
                     break;
                 case St.Chase:
                     {
                         double d = (cur.X - PW / 2.0) - x;
                         dir = d > 0 ? 1 : -1;
-                        if (Math.Abs(d) > 14 * S) x += dir * 3.6 * S; else SetState(St.Happy, 60);
+                        if (Math.Abs(d) > 14 * S) x += dir * 3.6 * S; else SetState(St.Happy, 50);
+                        break;
+                    }
+                case St.Fetch:
+                    {
+                        if (!ballActive || ballCarried) { SetState(St.Sit, 60); break; }
+                        double d = bx - MouthX(115);
+                        if (Math.Abs(d) > 7 * S) { dir = d > 0 ? 1 : -1; x += dir * 4 * S; stateTicks = 400; }
+                        else if (by >= wa.Bottom - BallR - 2)
+                        {
+                            ballCarried = true; ballWin.Hide();
+                            SetState(St.Carry, 600);
+                        }
+                        break;
+                    }
+                case St.Carry:
+                    {
+                        double target = Math.Max(wa.Left, Math.Min(wa.Right - PW, cur.X - PW / 2.0));
+                        double d = target - x;
+                        if (Math.Abs(d) > 24 * S) { dir = d > 0 ? 1 : -1; x += dir * 3.4 * S; stateTicks = 600; }
+                        else { dir = cur.X > x + PW / 2.0 ? 1 : -1; DropCarriedBall(true); }
+                        break;
+                    }
+                case St.GoEat:
+                    {
+                        if (!boneActive) { SetState(St.Sit, 60); break; }
+                        double d = boneX - MouthX(116);
+                        if (Math.Abs(d) > 5 * S) { dir = d > 0 ? 1 : -1; x += dir * 3.6 * S; stateTicks = 400; }
+                        else if (boneY >= wa.Bottom - 4 * S - 1) { eatStart = Environment.TickCount; SetState(St.Eat, int.MaxValue); }
+                        break;
+                    }
+                case St.Eat:
+                    {
+                        int t = Environment.TickCount - eatStart;
+                        boneBites = Math.Min(3, t / 1300);
+                        if (t > 4000)
+                        {
+                            boneActive = false; boneWin.Hide();
+                            mem.Treats++; mem.LastFed = DateTime.Now; mem.Affection = Math.Min(100, mem.Affection + 5); dirty = true;
+                            UpdateTooltip();
+                            Say(rnd.Next(2) == 0 ? "Ngon quá! Cảm ơn bạn ♥" : "Măm măm… no rồi nè ♥", 3000);
+                            SetState(St.Happy, 60);
+                        }
                         break;
                     }
                 case St.Fall:
                     vy += 0.9 * S; y += vy;
-                    if (y >= g)
-                    {
-                        y = g;
-                        if (vy > 9 * S) vy = -vy * 0.35;
-                        else { vy = 0; SetState(St.Sit, 80); }
-                    }
+                    if (y >= g) { y = g; if (vy > 9 * S) vy = -vy * 0.35; else { vy = 0; SetState(St.Sit, 70); } }
                     break;
                 case St.Happy:
                     if (y < g || vy < 0) { vy += 0.9 * S; y += vy; if (y >= g) { y = g; vy = 0; } }
@@ -468,7 +762,10 @@ namespace LuckyPet
             if (st != St.Drag && st != St.Fall && st != St.Happy) y = g;
             if (x < wa.Left) { x = wa.Left; dir = 1; }
             if (x > wa.Right - PW) { x = wa.Right - PW; dir = -1; }
-            if (st != St.Drag && --stateTicks <= 0) NextRandomState();
+            if (st == St.Sit && rnd.Next(70) == 0) blinkUntil = Environment.TickCount + 140;
+            if (st != St.Drag && st != St.Focus && st != St.Eat && --stateTicks <= 0) NextRandomState();
+
+            StepBall(); StepBone(); StepBubble();
             Render();
         }
 
@@ -476,7 +773,7 @@ namespace LuckyPet
         {
             IntPtr h = GetForegroundWindow();
             if (h == IntPtr.Zero || h == Handle || h == GetShellWindow()) return false;
-            var sb = new System.Text.StringBuilder(256); GetClassName(h, sb, 256);
+            var sb = new StringBuilder(256); GetClassName(h, sb, 256);
             string c = sb.ToString();
             if (c == "WorkerW" || c == "Progman" || c == "Shell_TrayWnd") return false;
             RECT r; GetWindowRect(h, out r);
@@ -484,437 +781,127 @@ namespace LuckyPet
             return r.L <= b.Left && r.T <= b.Top && r.R >= b.Right && r.B >= b.Bottom;
         }
 
-        // ---------- rendering ----------
-        void Render() { RenderFrame(); Push(); }
-
-        void RenderFrame()
+        // ---------------------------------------------------------- rendering
+        void Render()
         {
-            // 1) the pet itself on its own layer
-            using (var g = Graphics.FromImage(petLayer))
-            {
-                g.Clear(Color.Transparent);
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                g.ScaleTransform(S * SS, S * SS);
-                if (dir < 0) { g.TranslateTransform(CW, 0); g.ScaleTransform(-1, 1); }
-                if (st == St.Sleep) DrawSleep(g);
-                else if (st == St.Sit || st == St.Remind) DrawSit(g);
-                else DrawStand(g);
-            }
-            using (var g = Graphics.FromImage(petSmall))
-            {
-                g.Clear(Color.Transparent);
-                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                g.CompositingQuality = CompositingQuality.HighQuality;
-                g.DrawImage(petLayer, new Rectangle(0, 0, PW, PH));
-            }
-            // 2) ground shadow + white sticker outline + pet + overlays
+            int fps; string anim = Anim(out fps);
+            var frames = (dir > 0 ? sprR : sprL)[anim];
+            int idx = (int)(((long)(Environment.TickCount - animStart) * fps / 1000) % frames.Length);
+            if (idx < 0) idx = 0;
             using (var g = Graphics.FromImage(canvas))
             {
                 g.Clear(Color.Transparent);
                 g.SmoothingMode = SmoothingMode.AntiAlias;
-                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                var s0 = g.Save();
-                g.ScaleTransform(S, S);
-                if (dir < 0) { g.TranslateTransform(CW, 0); g.ScaleTransform(-1, 1); }
-                if (st == St.Sleep) GroundShadow(g, 62, 80);
-                else if (st == St.Sit || st == St.Remind) GroundShadow(g, 64, 64);
-                else GroundShadow(g, 62, 76);
-                g.Restore(s0);
-                float o = 1.25f * S;
-                for (int k = 0; k < 12; k++)
-                {
-                    double a = k * Math.PI / 6;
-                    int dx = (int)Math.Round(Math.Cos(a) * o), dy = (int)Math.Round(Math.Sin(a) * o);
-                    g.DrawImage(petSmall, new Rectangle(dx, dy, PW, PH), 0, 0, PW, PH, GraphicsUnit.Pixel, whiteAttr);
-                }
-                g.DrawImageUnscaled(petSmall, 0, 0);
                 g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+                if ((Ground() - y) / S < 3)
+                {
+                    float sw = anim == "sleep" ? 78 : anim.StartsWith("sit") ? 56 : 74;
+                    float scx = anim.StartsWith("sit") ? 64 : 62;
+                    if (dir < 0) scx = CW - scx;
+                    using (var p = new GraphicsPath())
+                    {
+                        p.AddEllipse((scx - sw / 2) * S, 110.5f * S, sw * S, 8 * S);
+                        using (var b = new PathGradientBrush(p) { CenterColor = Color.FromArgb(75, 8, 14, 34), SurroundColors = new[] { Color.FromArgb(0, 8, 14, 34) } })
+                            g.FillPath(b, p);
+                    }
+                }
+                g.DrawImageUnscaled(frames[idx], 0, 0);
                 g.ScaleTransform(S, S);
+                if (st == St.Carry) DrawBall(g, dir > 0 ? 117 : CW - 117, 71, 5.5f, 0);
                 DrawOverlay(g);
             }
-        }
-
-        void Push()
-        {
-            IntPtr screenDc = GetDC(IntPtr.Zero), memDc = CreateCompatibleDC(screenDc);
-            IntPtr hb = canvas.GetHbitmap(Color.FromArgb(0)), old = SelectObject(memDc, hb);
-            var size = new SIZE(PW, PH); var src = new POINT(0, 0); var dst = new POINT((int)x, (int)y);
-            var bf = new BLENDFUNCTION { BlendOp = 0, BlendFlags = 0, SourceConstantAlpha = 255, AlphaFormat = 1 };
-            UpdateLayeredWindow(Handle, screenDc, ref dst, ref size, memDc, ref src, 0, ref bf, 2);
-            SelectObject(memDc, old); DeleteObject(hb); DeleteDC(memDc); ReleaseDC(IntPtr.Zero, screenDc);
-        }
-
-        // --- drawing helpers ---
-        static PointF P(float x, float y) { return new PointF(x, y); }
-
-        static Brush Grad(RectangleF r, Color a, Color b)
-        {
-            return new LinearGradientBrush(new RectangleF(r.X, r.Y - 1, Math.Max(r.Width, 1), r.Height + 2), a, b, LinearGradientMode.Vertical);
-        }
-        // Spherical shading: light from the upper-left
-        static Brush Ball(GraphicsPath path, Color light, Color dark)
-        {
-            var bb = path.GetBounds();
-            var b = new PathGradientBrush(path);
-            b.CenterColor = light;
-            b.SurroundColors = new[] { dark };
-            b.CenterPoint = P(bb.X + bb.Width * 0.36f, bb.Y + bb.Height * 0.3f);
-            b.FocusScales = P(0.38f, 0.38f);
-            return b;
-        }
-        static GraphicsPath EllipsePath(RectangleF r) { var p = new GraphicsPath(); p.AddEllipse(r); return p; }
-        // Ellipse with a soft fluffy (scalloped) edge
-        static GraphicsPath Fluffy(RectangleF r, int n, float amp)
-        {
-            var pts = new PointF[n * 2];
-            float cx = r.X + r.Width / 2, cy = r.Y + r.Height / 2;
-            for (int i = 0; i < n * 2; i++)
-            {
-                double a = i * Math.PI / n;
-                float k = (i % 2 == 0) ? 1 + amp : 1 - amp * 0.35f;
-                pts[i] = P(cx + (float)Math.Cos(a) * r.Width / 2 * k, cy + (float)Math.Sin(a) * r.Height / 2 * k);
-            }
-            var p = new GraphicsPath(); p.AddClosedCurve(pts, 0.55f); return p;
-        }
-        static void Fill(Graphics g, GraphicsPath path, Color light, Color dark, bool line)
-        {
-            using (var b = Ball(path, light, dark)) g.FillPath(b, path);
-            if (line) using (var pen = new Pen(Line, 1.25f) { LineJoin = LineJoin.Round }) g.DrawPath(pen, path);
-        }
-        static void FillEl(Graphics g, RectangleF r, Color light, Color dark, bool line)
-        {
-            using (var p = EllipsePath(r)) Fill(g, p, light, dark, line);
-        }
-        static void Solid(Graphics g, Color c, float x, float y, float w, float h)
-        {
-            using (var b = new SolidBrush(c)) g.FillEllipse(b, x, y, w, h);
-        }
-        static void Curve(Graphics g, Color a, Color b, bool line, float tension, params PointF[] pts)
-        {
-            using (var path = new GraphicsPath())
-            {
-                path.AddClosedCurve(pts, tension);
-                Fill(g, path, a, b, line);
-            }
-        }
-        // Darken the top band of a shape (husky saddle / cap)
-        static void TopShade(Graphics g, GraphicsPath clip, RectangleF band, Color c)
-        {
-            var old = g.Clip;
-            g.SetClip(clip, CombineMode.Intersect);
-            using (var b = new LinearGradientBrush(new RectangleF(band.X, band.Y - 1, band.Width, band.Height + 2), c, Color.FromArgb(0, c), LinearGradientMode.Vertical))
-                g.FillRectangle(b, band);
-            g.Clip = old;
-        }
-        static void RimLight(Graphics g, RectangleF r, float from, float sweep)
-        {
-            r.Inflate(-1.4f, -1.4f);
-            using (var p = new Pen(Rim, 1.3f) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawArc(p, r, from, sweep);
-        }
-
-        void GroundShadow(Graphics g, float cx, float w)
-        {
-            if ((Ground() - y) / S > 3) return;
-            using (var p = EllipsePath(new RectangleF(cx - w / 2, 110.5f, w, 8)))
-            using (var b = new PathGradientBrush(p) { CenterColor = Color.FromArgb(70, 8, 14, 34), SurroundColors = new[] { Color.FromArgb(0, 8, 14, 34) } })
-                g.FillPath(b, p);
-        }
-
-        // Plush tail built from overlapping fluffy puffs, white tip
-        static void Tail(Graphics g, PointF a, PointF b, PointF c, PointF d, float w)
-        {
-            const int n = 15;
-            var pts = new PointF[n]; var rad = new float[n];
-            for (int i = 0; i < n; i++)
-            {
-                float t = i / (float)(n - 1), u = 1 - t;
-                pts[i] = P(u * u * u * a.X + 3 * u * u * t * b.X + 3 * u * t * t * c.X + t * t * t * d.X,
-                           u * u * u * a.Y + 3 * u * u * t * b.Y + 3 * u * t * t * c.Y + t * t * t * d.Y);
-                rad[i] = w * 0.5f * (0.72f + 0.5f * (float)Math.Sin(Math.PI * Math.Min(1.0, t * 1.05)));
-                if (t > 0.85f) rad[i] = Math.Max(rad[i], w * 0.62f);
-            }
-            using (var lb = new SolidBrush(Line))
-                for (int i = 0; i < n; i++) g.FillEllipse(lb, pts[i].X - rad[i] - 1.1f, pts[i].Y - rad[i] - 1.1f, (rad[i] + 1.1f) * 2, (rad[i] + 1.1f) * 2);
-            using (var fb = new SolidBrush(FurMid))
-            using (var wb = new SolidBrush(White))
-                for (int i = 0; i < n; i++)
-                {
-                    float t = i / (float)(n - 1);
-                    using (var p = Fluffy(new RectangleF(pts[i].X - rad[i], pts[i].Y - rad[i], rad[i] * 2, rad[i] * 2), 6, 0.07f))
-                        g.FillPath(t < 0.74f ? fb : wb, p);
-                }
-            using (var p = new Pen(Color.FromArgb(70, FurDark), w * 0.3f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
-                g.DrawBezier(p, P(a.X + 1.5f, a.Y + 2.5f), P(b.X + 1.5f, b.Y + 2.5f), P(c.X + 1.5f, c.Y + 2.5f), P(d.X + 1.5f, d.Y + 2.5f));
-            using (var p = new Pen(Color.FromArgb(150, FurLight), w * 0.3f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
-                g.DrawBezier(p, P(a.X - 1, a.Y - 2), P(b.X - 1, b.Y - 2), P(c.X - 1, c.Y - 2), P(d.X - 1, d.Y - 2));
-            var tip = new RectangleF(pts[n - 1].X - rad[n - 1], pts[n - 1].Y - rad[n - 1], rad[n - 1] * 2, rad[n - 1] * 2);
-            using (var p = Fluffy(tip, 7, 0.08f)) Fill(g, p, White, WhiteShade, false);
-        }
-
-        static void Leg(Graphics g, float x, float top, float h, bool back)
-        {
-            float w = 11, r = 5;
-            using (var path = new GraphicsPath())
-            {
-                path.AddArc(x, top, w, r * 2, 180, 180);
-                path.AddLine(x + w, top + r, x + w, top + h - r);
-                path.AddArc(x, top + h - r * 2, w, r * 2, 0, 180);
-                path.CloseFigure();
-                Fill(g, path, back ? WhiteShade : White, back ? Color.FromArgb(178, 190, 214) : WhiteShade, false);
-                var old = g.Clip;
-                g.SetClip(path, CombineMode.Intersect);
-                using (var fp = EllipsePath(new RectangleF(x - 4, top - 10, w + 8, h * 0.45f + 12)))
-                    Fill(g, fp, back ? FurMid : FurLight, back ? FurDark : FurMid, false);
-                g.Clip = old;
-                using (var pen = new Pen(Line, 1.25f)) g.DrawPath(pen, path);
-            }
-            FillEl(g, new RectangleF(x - 1.4f, top + h - 6.5f, w + 2.8f, 7.5f), White, WhiteShade, true);
-            using (var p = new Pen(Color.FromArgb(130, 80, 92, 124), 0.9f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
-            {
-                g.DrawLine(p, x + 3.4f, top + h - 3.2f, x + 3.4f, top + h - 0.6f);
-                g.DrawLine(p, x + 7.6f, top + h - 3.2f, x + 7.6f, top + h - 0.6f);
-            }
-        }
-
-        void Eye(Graphics g, float px, float py, float e, bool closed, bool happy, bool blink)
-        {
-            using (var lid = new Pen(Color.FromArgb(32, 36, 54), e * 0.17f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
-            {
-                if (closed) { g.DrawArc(lid, px - e / 2, py - e * 0.45f, e, e * 0.75f, 20, 140); return; }
-                if (happy) { g.DrawArc(lid, px - e / 2, py - e * 0.15f, e, e * 0.9f, 205, 130); return; }
-                if (blink) { g.DrawLine(lid, px - e / 2, py + e * 0.1f, px + e / 2, py + e * 0.1f); return; }
-                var er = new RectangleF(px - e / 2, py - e * 0.56f, e, e * 1.12f);
-                using (var b = new LinearGradientBrush(er, IrisTop, Iris1, LinearGradientMode.Vertical))
-                {
-                    var cb = new ColorBlend(3);
-                    cb.Colors = new[] { IrisTop, Iris2, Iris1 };
-                    cb.Positions = new[] { 0f, 0.5f, 1f };
-                    b.InterpolationColors = cb;
-                    g.FillEllipse(b, er);
-                }
-                float pw = e * (st == St.Chase ? 0.64f : 0.52f);
-                Solid(g, Color.FromArgb(14, 18, 32), px - pw / 2, py - pw / 2 + e * 0.06f, pw, pw * 1.05f);
-                using (var ring = new Pen(Color.FromArgb(150, 18, 46, 110), 0.8f)) g.DrawEllipse(ring, er);
-                using (var shine = new Pen(Color.FromArgb(170, 170, 255, 245), e * 0.09f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
-                    g.DrawArc(shine, er.X + e * 0.14f, er.Y + e * 0.2f, e * 0.72f, e * 0.8f, 40, 100);
-                Solid(g, Color.White, px - e * 0.4f, py - e * 0.46f, e * 0.42f, e * 0.42f);
-                Solid(g, Color.FromArgb(235, 255, 255, 255), px + e * 0.1f, py + e * 0.1f, e * 0.17f, e * 0.17f);
-                g.DrawArc(lid, er.X - e * 0.04f, er.Y - e * 0.02f, e * 1.08f, e * 1.1f, 200, 140);
-                g.DrawLine(lid, px + e * 0.48f, py - e * 0.3f, px + e * 0.66f, py - e * 0.44f); // lash flick
-            }
-        }
-
-        // Chibi husky head, facing right (3/4 view); snout points to +x
-        void Head(Graphics g, float cx, float cy, float r, bool closed)
-        {
-            bool happy = st == St.Happy || st == St.Remind;
-            // ears (far ear first)
-            Curve(g, FurMid, FurDark, true, 0.32f, P(cx - r * 0.95f, cy - r * 0.18f), P(cx - r * 0.68f, cy - r * 1.46f), P(cx - r * 0.04f, cy - r * 0.8f));
-            Curve(g, FurMid, FurDark, true, 0.32f, P(cx - r * 0.02f, cy - r * 0.86f), P(cx + r * 0.52f, cy - r * 1.52f), P(cx + r * 0.92f, cy - r * 0.3f));
-            Curve(g, EarIn1, EarIn2, false, 0.36f, P(cx - r * 0.77f, cy - r * 0.45f), P(cx - r * 0.64f, cy - r * 1.16f), P(cx - r * 0.27f, cy - r * 0.78f));
-            Curve(g, EarIn1, EarIn2, false, 0.36f, P(cx + r * 0.2f, cy - r * 0.83f), P(cx + r * 0.5f, cy - r * 1.22f), P(cx + r * 0.72f, cy - r * 0.46f));
-            using (var tuft = new Pen(Color.FromArgb(230, 255, 255, 255), 1f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
-            {
-                for (int k = 0; k < 3; k++)
-                {
-                    g.DrawLine(tuft, cx - r * (0.62f - k * 0.1f), cy - r * 0.55f, cx - r * (0.58f - k * 0.08f), cy - r * (0.82f + k * 0.04f));
-                    g.DrawLine(tuft, cx + r * (0.36f + k * 0.1f), cy - r * 0.62f, cx + r * (0.42f + k * 0.07f), cy - r * (0.9f - k * 0.02f));
-                }
-            }
-            // fluffy cheeks
-            using (var ck = Fluffy(new RectangleF(cx - r * 1.16f, cy + r * 0.0f, r * 0.74f, r * 0.66f), 6, 0.16f)) Fill(g, ck, White, WhiteShade, true);
-            using (var ck = Fluffy(new RectangleF(cx + r * 0.46f, cy + r * 0.12f, r * 0.66f, r * 0.58f), 6, 0.16f)) Fill(g, ck, White, WhiteShade, true);
-            // head
-            var hr = new RectangleF(cx - r * 1.02f, cy - r * 0.96f, r * 2.04f, r * 1.88f);
-            using (var hp = EllipsePath(hr))
-            {
-                Fill(g, hp, FurMid, FurDark, false);
-                TopShade(g, hp, new RectangleF(hr.X, hr.Y, hr.Width, r * 0.85f), Color.FromArgb(150, FurDark));
-                var old = g.Clip;
-                g.SetClip(hp, CombineMode.Intersect);
-                FillEl(g, new RectangleF(cx - r * 0.98f, cy + r * 0.1f, r * 1.96f, r * 1.0f), White, WhiteShade, false);    // lower mask
-                FillEl(g, new RectangleF(cx - r * 0.68f, cy - r * 0.3f, r * 0.56f, r * 0.54f), White, WhiteShade, false);   // goggle L
-                FillEl(g, new RectangleF(cx + r * 0.07f, cy - r * 0.32f, r * 0.54f, r * 0.52f), White, WhiteShade, false);  // goggle R
-                Curve(g, White, White, false, 0.45f, P(cx - r * 0.13f, cy + r * 0.12f), P(cx - r * 0.02f, cy - r * 0.78f), P(cx + r * 0.1f, cy + r * 0.12f));
-                Solid(g, Color.FromArgb(55, 255, 255, 255), cx - r * 0.66f, cy - r * 0.9f, r * 0.8f, r * 0.4f);
-                g.Clip = old;
-                RimLight(g, hr, 195, 75);
-                using (var pen = new Pen(Line, 1.25f)) g.DrawPath(pen, hp);
-            }
-            // blush
-            Solid(g, Color.FromArgb(120, 255, 150, 185), cx - r * 0.78f, cy + r * 0.2f, r * 0.4f, r * 0.2f);
-            Solid(g, Color.FromArgb(100, 255, 150, 185), cx + r * 0.08f, cy + r * 0.24f, r * 0.32f, r * 0.17f);
-            // muzzle
-            var mr = new RectangleF(cx + r * 0.32f, cy + r * 0.1f, r * 0.92f, r * 0.62f);
-            FillEl(g, mr, White, WhiteShade, true);
-            Solid(g, Color.FromArgb(40, 60, 70, 100), mr.X + r * 0.12f, mr.Bottom - r * 0.18f, r * 0.6f, r * 0.14f);
-            using (var dot = new SolidBrush(Color.FromArgb(120, 120, 134, 166)))
-                for (int k = 0; k < 3; k++) g.FillEllipse(dot, cx + r * (0.62f + k * 0.11f), cy + r * (0.42f - k * 0.03f), 1.3f, 1.3f);
-            // nose
-            FillEl(g, new RectangleF(cx + r * 1.0f, cy + r * 0.08f, r * 0.33f, r * 0.24f), Color.FromArgb(120, 126, 150), NoseC, false);
-            Solid(g, Color.FromArgb(225, 255, 255, 255), cx + r * 1.06f, cy + r * 0.11f, r * 0.12f, r * 0.07f);
-            using (var mp = new Pen(Color.FromArgb(76, 80, 104), 1.15f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
-            {
-                g.DrawLine(mp, cx + r * 1.16f, cy + r * 0.32f, cx + r * 1.14f, cy + r * 0.4f);
-                if (happy || st == St.Chase)
-                {
-                    using (var mouth = EllipsePath(new RectangleF(cx + r * 0.8f, cy + r * 0.38f, r * 0.44f, r * 0.32f)))
-                    using (var b = new SolidBrush(Color.FromArgb(118, 46, 68))) g.FillPath(b, mouth);
-                    FillEl(g, new RectangleF(cx + r * 0.86f, cy + r * 0.5f, r * 0.32f, r * 0.44f), Tongue1, Tongue2, false);
-                    g.DrawLine(mp, cx + r * 1.02f, cy + r * 0.56f, cx + r * 1.02f, cy + r * 0.8f);
-                    Solid(g, Color.FromArgb(150, 255, 255, 255), cx + r * 0.9f, cy + r * 0.56f, r * 0.08f, r * 0.12f);
-                }
-                else
-                {
-                    g.DrawArc(mp, cx + r * 0.94f, cy + r * 0.32f, r * 0.2f, r * 0.16f, 0, 180);
-                    g.DrawArc(mp, cx + r * 1.13f, cy + r * 0.32f, r * 0.2f, r * 0.16f, 0, 180);
-                }
-            }
-            // eyes
-            bool blink = (frame % 150) < 4;
-            Eye(g, cx - r * 0.4f, cy - r * 0.1f, r * 0.46f, closed, happy, blink);
-            Eye(g, cx + r * 0.33f, cy - r * 0.12f, r * 0.42f, closed, happy, blink);
-        }
-
-        void Collar(Graphics g, float cx, float cy, float w)
-        {
-            using (var p = new Pen(Collar2, 5f) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawArc(p, cx - w / 2, cy - 7, w, 12, 25, 130);
-            using (var p = new Pen(Collar1, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawArc(p, cx - w / 2, cy - 8, w, 12, 38, 104);
-            var tr = new RectangleF(cx - 4.2f, cy + 3.4f, 8.4f, 8.4f);
-            FillEl(g, tr, White, TagColor, true);
-            using (var b = new SolidBrush(Color.FromArgb(150, 120, 134, 166)))
-            {
-                g.FillEllipse(b, cx - 1.6f, cy + 7.6f, 3.2f, 2.6f);
-                g.FillEllipse(b, cx - 2.4f, cy + 5.6f, 1.3f, 1.3f); g.FillEllipse(b, cx - 0.65f, cy + 5.0f, 1.3f, 1.3f); g.FillEllipse(b, cx + 1.1f, cy + 5.6f, 1.3f, 1.3f);
-            }
-            Solid(g, Color.White, tr.X + 1.6f, tr.Y + 1.4f, 2.2f, 2.2f);
-        }
-
-        void Body(Graphics g, RectangleF r, float saddleH)
-        {
-            using (var bp = Fluffy(r, 14, 0.035f))
-            {
-                Fill(g, bp, FurMid, FurDark, true);
-                TopShade(g, bp, new RectangleF(r.X, r.Y - 2, r.Width, saddleH), Color.FromArgb(215, FurDark));
-                var old = g.Clip;
-                g.SetClip(bp, CombineMode.Intersect);
-                FillEl(g, new RectangleF(r.X + r.Width * 0.18f, r.Bottom - r.Height * 0.42f, r.Width * 0.72f, r.Height * 0.62f), White, WhiteShade, false);
-                g.Clip = old;
-                RimLight(g, r, 200, 80);
-            }
-        }
-
-        void DrawStand(Graphics g)
-        {
-            bool walking = st == St.Walk || st == St.Chase;
-            float speed = st == St.Chase ? 0.6f : 0.35f;
-            float bob = walking ? (float)Math.Abs(Math.Sin(frame * speed)) * 2 : 0;
-            float wag = st == St.Happy || st == St.Chase ? (float)Math.Sin(frame * 0.8) * 9 : (float)Math.Sin(frame * 0.25) * 4;
-            float ph = walking ? (float)Math.Sin(frame * speed) * 4 : 0;
-            Tail(g, P(34, 86 - bob), P(14, 80), P(10 + wag * 0.4f, 50 + wag), P(30 + wag * 0.3f, 50 + wag * 0.5f), 13);
-            Leg(g, 36 - ph, 93 - bob, 22 + bob, true); Leg(g, 49 + ph, 93 - bob, 22 + bob, true);
-            Body(g, new RectangleF(28, 72 - bob, 68, 36), 14);
-            Solid(g, Color.FromArgb(45, 20, 28, 60), 70, 74 - bob, 28, 14); // occlusion under the head
-            Leg(g, 70 + ph, 93 - bob, 22 + bob, false); Leg(g, 82 - ph, 93 - bob, 22 + bob, false);
-            using (var ruff = Fluffy(new RectangleF(72, 72 - bob, 28, 30), 7, 0.13f)) Fill(g, ruff, White, WhiteShade, true);
-            Collar(g, 88, 78 - bob, 26);
-            Head(g, 92, 56 - bob, 24, false);
-        }
-
-        void DrawSit(Graphics g)
-        {
-            float wag = st == St.Remind ? (float)Math.Sin(frame * 0.6) * 5 : (float)Math.Sin(frame * 0.12) * 3;
-            Tail(g, P(46, 108), P(24, 116), P(14 + wag, 100), P(24 + wag, 86), 13);
-            using (var hp = Fluffy(new RectangleF(36, 93, 32, 22), 8, 0.04f)) Fill(g, hp, FurMid, FurDark, true);
-            Body(g, new RectangleF(42, 66, 46, 50), 18);
-            using (var chest = Fluffy(new RectangleF(52, 70, 30, 40), 8, 0.1f)) Fill(g, chest, White, WhiteShade, true);
-            Leg(g, 55, 95, 21, false); Leg(g, 69, 95, 21, false);
-            Collar(g, 66, 70, 30);
-            Head(g, 66, 46, 25, false);
-        }
-
-        void DrawSleep(Graphics g)
-        {
-            float br = (float)Math.Sin(frame * 0.08) * 1.3f;
-            Body(g, new RectangleF(26, 86 - br, 72, 30 + br), 12);
-            FillEl(g, new RectangleF(84, 106, 18, 9), White, WhiteShade, true);
-            FillEl(g, new RectangleF(92, 108.5f, 16, 8), White, WhiteShade, true);
-            Tail(g, P(30, 104), P(12, 118), P(56, 124), P(88, 115), 13);
-            Collar(g, 80, 86, 24);
-            Head(g, 82, 92, 21, true);
+            Push(canvas, (int)x, (int)y);
         }
 
         float HeadX(float hx) { return dir > 0 ? hx : CW - hx; }
 
         void DrawOverlay(Graphics g)
         {
-            if (st == St.Sleep)
+            if (st == St.Sleep || st == St.Focus)
             {
-                float hx = HeadX(84);
-                using (var f = new Font("Segoe UI", 9f, FontStyle.Bold))
+                float hx = HeadX(86);
+                using (var f = new Font("Segoe UI", 8.5f, FontStyle.Bold))
                     for (int k = 0; k < 3; k++)
                     {
                         double ph = (frame * 0.012 + k / 3.0) % 1.0;
-                        int a = (int)(255 * (1 - ph));
-                        using (var b = new SolidBrush(Color.FromArgb(a, 205, 225, 255)))
+                        using (var b = new SolidBrush(Color.FromArgb((int)(255 * (1 - ph)), 214, 232, 255)))
                         {
                             var s0 = g.Save();
-                            g.TranslateTransform(hx + (float)(ph * 18 * (dir > 0 ? 1 : -1)), 60 - (float)(ph * 46));
+                            g.TranslateTransform(hx + (float)(ph * 16 * (dir > 0 ? 1 : -1)), 62 - (float)(ph * 40));
                             g.ScaleTransform(0.7f + (float)ph * 0.6f, 0.7f + (float)ph * 0.6f);
-                            g.DrawString("z", f, b, 0, 0);
+                            g.DrawString(st == St.Focus && k == 1 ? "✦" : "z", f, b, 0, 0);
                             g.Restore(s0);
                         }
                     }
             }
-            if (st == St.Happy)
+            if (st == St.Happy || st == St.Eat)
             {
-                float hx = HeadX(92);
+                float hx = HeadX(st == St.Eat ? 100 : 92);
                 int n = mem.Affection > 80 ? 5 : 3;
                 for (int k = 0; k < n; k++)
                 {
                     double ph = (frame * 0.03 + k / (double)n) % 1.0;
                     float hxk = hx - 20 + k * (40f / (n - 1)) + (float)Math.Sin(frame * 0.2 + k) * 2;
-                    Heart(g, hxk, 26 - (float)ph * 24, 4.5f, (int)(255 * (1 - ph)));
+                    Heart(g, hxk, (st == St.Eat ? 62 : 24) - (float)ph * 22, 4.2f, (int)(255 * (1 - ph)));
                 }
             }
-            if (st == St.Remind)
-            {
-                float hx = HeadX(66);
-                float bx = dir > 0 ? hx + 12 : hx - 50;
-                bx = Math.Max(2, Math.Min(CW - 40, bx));
-                float by = 2 + (float)Math.Sin(frame * 0.15) * 1.5f;
-                using (var path = Rounded(bx, by, 38, 26, 9))
-                {
-                    using (var b = new SolidBrush(Color.FromArgb(238, 244, 249, 255))) g.FillPath(b, path);
-                    using (var p = new Pen(Color.FromArgb(120, 160, 210), 1.5f)) g.DrawPath(p, path);
-                }
-                float dx = bx + 19, dy = by + 4;
-                using (var b = new SolidBrush(Color.FromArgb(70, 160, 240)))
-                {
-                    g.FillEllipse(b, dx - 7, dy + 6, 14, 14);
-                    g.FillPolygon(b, new[] { P(dx, dy - 1), P(dx - 6.3f, dy + 10), P(dx + 6.3f, dy + 10) });
-                }
-                Solid(g, Color.FromArgb(220, 255, 255, 255), dx - 4, dy + 9, 3.5f, 5);
-            }
-        }
-
-        static GraphicsPath Rounded(float x, float y, float w, float h, float r)
-        {
-            var p = new GraphicsPath();
-            p.AddArc(x, y, r * 2, r * 2, 180, 90); p.AddArc(x + w - r * 2, y, r * 2, r * 2, 270, 90);
-            p.AddArc(x + w - r * 2, y + h - r * 2, r * 2, r * 2, 0, 90); p.AddArc(x, y + h - r * 2, r * 2, r * 2, 90, 90);
-            p.CloseFigure(); return p;
         }
 
         static void Heart(Graphics g, float x, float y, float s, int a)
         {
-            using (var b = new SolidBrush(Color.FromArgb(Math.Max(0, Math.Min(255, a)), 255, 120, 165)))
+            a = Math.Max(0, Math.Min(255, a));
+            using (var b = new SolidBrush(Color.FromArgb(a, 255, 118, 164)))
             {
                 g.FillEllipse(b, x - s, y - s / 2, s * 1.1f, s * 1.1f);
                 g.FillEllipse(b, x - s * 0.1f, y - s / 2, s * 1.1f, s * 1.1f);
-                g.FillPolygon(b, new[] { P(x - s * 0.95f, y + s * 0.2f), P(x + s * 0.95f, y + s * 0.2f), P(x, y + s * 1.4f) });
+                g.FillPolygon(b, new[] { new PointF(x - s * 0.95f, y + s * 0.2f), new PointF(x + s * 0.95f, y + s * 0.2f), new PointF(x, y + s * 1.4f) });
+            }
+            using (var b = new SolidBrush(Color.FromArgb(a * 3 / 4, 255, 255, 255))) g.FillEllipse(b, x - s * 0.7f, y - s * 0.25f, s * 0.4f, s * 0.3f);
+        }
+
+        // Blue & white water-element ball with a rolling seam
+        static void DrawBall(Graphics g, float cx, float cy, float r, float rot)
+        {
+            var rect = new RectangleF(cx - r, cy - r, r * 2, r * 2);
+            using (var p = new GraphicsPath())
+            {
+                p.AddEllipse(rect);
+                using (var b = new PathGradientBrush(p) { CenterColor = Color.FromArgb(120, 196, 255), SurroundColors = new[] { Color.FromArgb(22, 86, 196) }, CenterPoint = new PointF(cx - r * 0.35f, cy - r * 0.4f) })
+                    g.FillPath(b, p);
+                var old = g.Clip; g.SetClip(p, CombineMode.Intersect);
+                var gs = g.Save();
+                g.TranslateTransform(cx, cy); g.RotateTransform(rot * 57.3f);
+                using (var pen = new Pen(Color.FromArgb(235, 255, 255, 255), r * 0.22f))
+                {
+                    g.DrawArc(pen, -r * 1.6f, -r * 0.9f, r * 1.6f, r * 1.8f, -60, 120);
+                    g.DrawArc(pen, 0, -r * 0.9f, r * 1.6f, r * 1.8f, 120, 120);
+                }
+                g.Restore(gs);
+                g.Clip = old;
+                using (var pen = new Pen(Color.FromArgb(160, 20, 50, 110), Math.Max(1f, r * 0.08f))) g.DrawEllipse(pen, rect);
+                using (var b = new SolidBrush(Color.FromArgb(200, 255, 255, 255))) g.FillEllipse(b, cx - r * 0.55f, cy - r * 0.6f, r * 0.42f, r * 0.3f);
+            }
+        }
+
+        static void DrawBone(Graphics g, float cx, float cy, float s, int bites)
+        {
+            float len = 9 * s * (1 - bites * 0.22f);
+            if (len < 2 * s) return;
+            float k = 3.4f * s;
+            using (var path = new GraphicsPath())
+            {
+                path.AddEllipse(cx - len - k, cy - k * 1.35f, k * 1.5f, k * 1.5f);
+                path.AddEllipse(cx - len - k, cy - k * 0.15f, k * 1.5f, k * 1.5f);
+                if (bites < 2)
+                {
+                    path.AddEllipse(cx + len - k * 0.5f, cy - k * 1.35f, k * 1.5f, k * 1.5f);
+                    path.AddEllipse(cx + len - k * 0.5f, cy - k * 0.15f, k * 1.5f, k * 1.5f);
+                }
+                path.AddRectangle(new RectangleF(cx - len, cy - k * 0.6f, len * 2, k * 1.2f));
+                path.FillMode = FillMode.Winding;
+                using (var b = new LinearGradientBrush(new RectangleF(cx - len - k, cy - k * 1.4f, len * 2 + k * 2, k * 2.8f), Color.FromArgb(255, 252, 244), Color.FromArgb(222, 206, 178), LinearGradientMode.Vertical))
+                    g.FillPath(b, path);
+                using (var p = new Pen(Color.FromArgb(170, 150, 120, 90), Math.Max(1f, 0.9f * s))) g.DrawPath(p, path);
             }
         }
 
@@ -924,16 +911,10 @@ namespace LuckyPet
             {
                 using (var g = Graphics.FromImage(bmp))
                 {
-                    g.SmoothingMode = SmoothingMode.AntiAlias;
-                    using (var b = new SolidBrush(FurMid))
-                    {
-                        g.FillPolygon(b, new[] { P(4, 14), P(7, 0), P(14, 8) });
-                        g.FillPolygon(b, new[] { P(18, 8), P(25, 0), P(28, 14) });
-                        g.FillEllipse(b, 3, 6, 26, 24);
-                    }
-                    using (var b = new SolidBrush(White)) { g.FillEllipse(b, 6, 17, 20, 13); g.FillEllipse(b, 14, 7, 4, 9); }
-                    using (var b = new SolidBrush(Iris2)) { g.FillEllipse(b, 9, 13, 5, 6); g.FillEllipse(b, 18, 13, 5, 6); }
-                    using (var b = new SolidBrush(NoseC)) g.FillEllipse(b, 13, 21, 6, 4);
+                    g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    var sit = sprR["sit"][0];
+                    float hx = 66 * S, hy = 44 * S, hr = 32 * S;   // crop the head from the sitting sprite
+                    g.DrawImage(sit, new Rectangle(0, 0, 32, 32), hx - hr, hy - hr, hr * 2, hr * 2, GraphicsUnit.Pixel);
                 }
                 IntPtr h = bmp.GetHicon();
                 var ic = (Icon)Icon.FromHandle(h).Clone();
