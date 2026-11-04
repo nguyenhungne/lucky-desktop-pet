@@ -46,7 +46,7 @@ namespace LuckyPet
         public DateTime FirstMet = DateTime.Now, LastSeen = DateTime.Now;
         public int Pets, Chases, Reminders, Naps, Drops, DayMilestone, PetMilestone;
         public double Affection = 60, PosX = -1;
-        public float Size = 1.4f;
+        public float Size = 0.85f;
         public int Facing = 1;
         public bool RemindOn = true;
 
@@ -85,7 +85,7 @@ namespace LuckyPet
                         case "pos_x": m.PosX = double.Parse(v, CI); break;
                         case "facing": m.Facing = int.Parse(v, CI) < 0 ? -1 : 1; break;
                         case "remind_on": m.RemindOn = v == "true"; break;
-                        case "size": m.Size = Math.Max(0.8f, Math.Min(2.5f, float.Parse(v, CI))); break;
+                        case "size": m.Size = Math.Max(0.6f, Math.Min(2.5f, float.Parse(v, CI))); break;
                     }
                 }
                 catch { /* ignore a bad line, keep the rest */ }
@@ -111,7 +111,7 @@ namespace LuckyPet
             sb.AppendLine("pos_x=" + PosX.ToString("0", CI));
             sb.AppendLine("facing=" + Facing.ToString(CI));
             sb.AppendLine("remind_on=" + (RemindOn ? "true" : "false"));
-            sb.AppendLine("size=" + Size.ToString("0.0", CI));
+            sb.AppendLine("size=" + Size.ToString("0.00", CI));
             string tmp = FilePath + ".tmp";
             File.WriteAllText(tmp, sb.ToString(), new UTF8Encoding(false));
             if (File.Exists(FilePath)) File.Replace(tmp, FilePath, null); else File.Move(tmp, FilePath);
@@ -145,7 +145,8 @@ namespace LuckyPet
         static readonly int[] DayMilestones = { 3, 7, 30, 100, 365 };
         static readonly int[] PetMilestones = { 10, 50, 100, 500, 1000 };
         float S, dpiScale = 1; int PW, PH;
-        Bitmap canvas, petLayer;
+        Bitmap canvas, petLayer, petSmall;
+        const int SS = 2; // supersampling factor
         System.Drawing.Imaging.ImageAttributes whiteAttr;
         Timer timer;
         Random rnd = new Random();
@@ -160,12 +161,13 @@ namespace LuckyPet
         string pendingTitle, pendingText;
 
         // Husky palette (water-element friendly: grey-blue, white, blue eyes)
-        static readonly Color FurTop = Color.FromArgb(82, 96, 128), FurMid = Color.FromArgb(124, 140, 170), FurLight = Color.FromArgb(166, 182, 208),
-            White = Color.FromArgb(250, 251, 254), WhiteShade = Color.FromArgb(210, 219, 236), Line = Color.FromArgb(160, 50, 60, 90),
-            EarIn1 = Color.FromArgb(253, 222, 232), EarIn2 = Color.FromArgb(230, 178, 202),
-            Iris1 = Color.FromArgb(160, 218, 255), Iris2 = Color.FromArgb(34, 104, 210),
-            NoseC = Color.FromArgb(36, 40, 54), Tongue1 = Color.FromArgb(255, 160, 180), Tongue2 = Color.FromArgb(232, 96, 128),
-            Collar1 = Color.FromArgb(120, 236, 236), Collar2 = Color.FromArgb(26, 150, 190), TagColor = Color.FromArgb(188, 200, 222);
+        static readonly Color FurDark = Color.FromArgb(62, 74, 106), FurMid = Color.FromArgb(116, 132, 166), FurLight = Color.FromArgb(182, 196, 222),
+            White = Color.FromArgb(253, 254, 255), WhiteShade = Color.FromArgb(204, 214, 234), Line = Color.FromArgb(175, 42, 50, 80),
+            Rim = Color.FromArgb(150, 205, 232, 255),
+            EarIn1 = Color.FromArgb(255, 212, 226), EarIn2 = Color.FromArgb(224, 156, 188),
+            IrisTop = Color.FromArgb(22, 58, 138), Iris2 = Color.FromArgb(52, 136, 232), Iris1 = Color.FromArgb(156, 222, 255),
+            NoseC = Color.FromArgb(32, 36, 50), Tongue1 = Color.FromArgb(255, 164, 184), Tongue2 = Color.FromArgb(226, 88, 122),
+            Collar1 = Color.FromArgb(150, 244, 240), Collar2 = Color.FromArgb(28, 158, 196), TagColor = Color.FromArgb(170, 184, 210);
 
         protected override CreateParams CreateParams
         {
@@ -204,8 +206,10 @@ namespace LuckyPet
             PW = (int)(CW * S); PH = (int)(CH * S);
             if (canvas != null) canvas.Dispose();
             if (petLayer != null) petLayer.Dispose();
+            if (petSmall != null) petSmall.Dispose();
             canvas = new Bitmap(PW, PH, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            petLayer = new Bitmap(PW, PH, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            petLayer = new Bitmap(PW * SS, PH * SS, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+            petSmall = new Bitmap(PW, PH, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
             if (whiteAttr == null)
             {
                 // Paint every pixel near-white while keeping its alpha -> used for the sticker outline
@@ -249,7 +253,7 @@ namespace LuckyPet
             menu.Items.Add("Cho Lucky đi ngủ 💤", null, delegate { SetState(St.Sleep, 1200); });
             menu.Items.Add("Đánh thức Lucky", null, delegate { SetState(St.Walk, 150); });
             var sizeMenu = new ToolStripMenuItem("Kích thước");
-            foreach (var opt in new[] { new KeyValuePair<string, float>("Nhỏ", 1.0f), new KeyValuePair<string, float>("Vừa", 1.4f), new KeyValuePair<string, float>("Lớn", 1.8f) })
+            foreach (var opt in new[] { new KeyValuePair<string, float>("Nhỏ", 0.85f), new KeyValuePair<string, float>("Vừa", 1.1f), new KeyValuePair<string, float>("Lớn", 1.4f) })
             {
                 var it = new ToolStripMenuItem(opt.Key) { Checked = Math.Abs(mem.Size - opt.Value) < 0.05f, Tag = opt.Value };
                 it.Click += delegate(object s, EventArgs e)
@@ -367,7 +371,7 @@ namespace LuckyPet
             st = s; stateTicks = ticks;
             if (s == St.Happy && y >= Ground() - 1) vy = -7 * S;
             if (s == St.Fall) vy = 0;
-            timer.Interval = (s == St.Sleep || s == St.Sit) ? 50 : 33;
+            timer.Interval = (s == St.Sleep || s == St.Sit) ? 70 : 40;
         }
 
         void NextRandomState()
@@ -491,11 +495,19 @@ namespace LuckyPet
                 g.Clear(Color.Transparent);
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                g.ScaleTransform(S, S);
+                g.ScaleTransform(S * SS, S * SS);
                 if (dir < 0) { g.TranslateTransform(CW, 0); g.ScaleTransform(-1, 1); }
                 if (st == St.Sleep) DrawSleep(g);
                 else if (st == St.Sit || st == St.Remind) DrawSit(g);
                 else DrawStand(g);
+            }
+            using (var g = Graphics.FromImage(petSmall))
+            {
+                g.Clear(Color.Transparent);
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.CompositingQuality = CompositingQuality.HighQuality;
+                g.DrawImage(petLayer, new Rectangle(0, 0, PW, PH));
             }
             // 2) ground shadow + white sticker outline + pet + overlays
             using (var g = Graphics.FromImage(canvas))
@@ -510,14 +522,14 @@ namespace LuckyPet
                 else if (st == St.Sit || st == St.Remind) GroundShadow(g, 64, 64);
                 else GroundShadow(g, 62, 76);
                 g.Restore(s0);
-                float o = 1.7f * S;
+                float o = 1.25f * S;
                 for (int k = 0; k < 12; k++)
                 {
                     double a = k * Math.PI / 6;
                     int dx = (int)Math.Round(Math.Cos(a) * o), dy = (int)Math.Round(Math.Sin(a) * o);
-                    g.DrawImage(petLayer, new Rectangle(dx, dy, PW, PH), 0, 0, PW, PH, GraphicsUnit.Pixel, whiteAttr);
+                    g.DrawImage(petSmall, new Rectangle(dx, dy, PW, PH), 0, 0, PW, PH, GraphicsUnit.Pixel, whiteAttr);
                 }
-                g.DrawImageUnscaled(petLayer, 0, 0);
+                g.DrawImageUnscaled(petSmall, 0, 0);
                 g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
                 g.ScaleTransform(S, S);
                 DrawOverlay(g);
@@ -541,11 +553,39 @@ namespace LuckyPet
         {
             return new LinearGradientBrush(new RectangleF(r.X, r.Y - 1, Math.Max(r.Width, 1), r.Height + 2), a, b, LinearGradientMode.Vertical);
         }
-        static void Blob(Graphics g, float x, float y, float w, float h, Color a, Color b, bool line)
+        // Spherical shading: light from the upper-left
+        static Brush Ball(GraphicsPath path, Color light, Color dark)
         {
-            var r = new RectangleF(x, y, w, h);
-            using (var br = Grad(r, a, b)) g.FillEllipse(br, r);
-            if (line) using (var p = new Pen(Line, 1.6f)) g.DrawEllipse(p, r);
+            var bb = path.GetBounds();
+            var b = new PathGradientBrush(path);
+            b.CenterColor = light;
+            b.SurroundColors = new[] { dark };
+            b.CenterPoint = P(bb.X + bb.Width * 0.36f, bb.Y + bb.Height * 0.3f);
+            b.FocusScales = P(0.38f, 0.38f);
+            return b;
+        }
+        static GraphicsPath EllipsePath(RectangleF r) { var p = new GraphicsPath(); p.AddEllipse(r); return p; }
+        // Ellipse with a soft fluffy (scalloped) edge
+        static GraphicsPath Fluffy(RectangleF r, int n, float amp)
+        {
+            var pts = new PointF[n * 2];
+            float cx = r.X + r.Width / 2, cy = r.Y + r.Height / 2;
+            for (int i = 0; i < n * 2; i++)
+            {
+                double a = i * Math.PI / n;
+                float k = (i % 2 == 0) ? 1 + amp : 1 - amp * 0.35f;
+                pts[i] = P(cx + (float)Math.Cos(a) * r.Width / 2 * k, cy + (float)Math.Sin(a) * r.Height / 2 * k);
+            }
+            var p = new GraphicsPath(); p.AddClosedCurve(pts, 0.55f); return p;
+        }
+        static void Fill(Graphics g, GraphicsPath path, Color light, Color dark, bool line)
+        {
+            using (var b = Ball(path, light, dark)) g.FillPath(b, path);
+            if (line) using (var pen = new Pen(Line, 1.25f) { LineJoin = LineJoin.Round }) g.DrawPath(pen, path);
+        }
+        static void FillEl(Graphics g, RectangleF r, Color light, Color dark, bool line)
+        {
+            using (var p = EllipsePath(r)) Fill(g, p, light, dark, line);
         }
         static void Solid(Graphics g, Color c, float x, float y, float w, float h)
         {
@@ -553,29 +593,67 @@ namespace LuckyPet
         }
         static void Curve(Graphics g, Color a, Color b, bool line, float tension, params PointF[] pts)
         {
-            float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
-            foreach (var p in pts) { x0 = Math.Min(x0, p.X); y0 = Math.Min(y0, p.Y); x1 = Math.Max(x1, p.X); y1 = Math.Max(y1, p.Y); }
-            using (var br = Grad(new RectangleF(x0, y0, x1 - x0, y1 - y0), a, b)) g.FillClosedCurve(br, pts, FillMode.Alternate, tension);
-            if (line) using (var pen = new Pen(Line, 1.6f) { LineJoin = LineJoin.Round }) g.DrawClosedCurve(pen, pts, tension, FillMode.Alternate);
+            using (var path = new GraphicsPath())
+            {
+                path.AddClosedCurve(pts, tension);
+                Fill(g, path, a, b, line);
+            }
+        }
+        // Darken the top band of a shape (husky saddle / cap)
+        static void TopShade(Graphics g, GraphicsPath clip, RectangleF band, Color c)
+        {
+            var old = g.Clip;
+            g.SetClip(clip, CombineMode.Intersect);
+            using (var b = new LinearGradientBrush(new RectangleF(band.X, band.Y - 1, band.Width, band.Height + 2), c, Color.FromArgb(0, c), LinearGradientMode.Vertical))
+                g.FillRectangle(b, band);
+            g.Clip = old;
+        }
+        static void RimLight(Graphics g, RectangleF r, float from, float sweep)
+        {
+            r.Inflate(-1.4f, -1.4f);
+            using (var p = new Pen(Rim, 1.3f) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawArc(p, r, from, sweep);
         }
 
         void GroundShadow(Graphics g, float cx, float w)
         {
             if ((Ground() - y) / S > 3) return;
-            using (var b = new SolidBrush(Color.FromArgb(55, 10, 16, 36))) g.FillEllipse(b, cx - w / 2, 111, w, 7);
+            using (var p = EllipsePath(new RectangleF(cx - w / 2, 110.5f, w, 8)))
+            using (var b = new PathGradientBrush(p) { CenterColor = Color.FromArgb(70, 8, 14, 34), SurroundColors = new[] { Color.FromArgb(0, 8, 14, 34) } })
+                g.FillPath(b, p);
         }
 
-        // Fluffy curled husky tail with a white tip
+        // Plush tail built from overlapping fluffy puffs, white tip
         static void Tail(Graphics g, PointF a, PointF b, PointF c, PointF d, float w)
         {
-            using (var p = new Pen(Line, w + 2.4f) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawBezier(p, a, b, c, d);
-            using (var p = new Pen(FurMid, w) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawBezier(p, a, b, c, d);
-            using (var p = new Pen(Color.FromArgb(140, FurLight), w * 0.4f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
-                g.DrawBezier(p, P(a.X - 1, a.Y - 1.5f), P(b.X - 1, b.Y - 1.5f), P(c.X - 1, c.Y - 1.5f), P(d.X - 1, d.Y - 1.5f));
-            Blob(g, d.X - w * 0.72f, d.Y - w * 0.72f, w * 1.44f, w * 1.44f, White, WhiteShade, true);
+            const int n = 15;
+            var pts = new PointF[n]; var rad = new float[n];
+            for (int i = 0; i < n; i++)
+            {
+                float t = i / (float)(n - 1), u = 1 - t;
+                pts[i] = P(u * u * u * a.X + 3 * u * u * t * b.X + 3 * u * t * t * c.X + t * t * t * d.X,
+                           u * u * u * a.Y + 3 * u * u * t * b.Y + 3 * u * t * t * c.Y + t * t * t * d.Y);
+                rad[i] = w * 0.5f * (0.72f + 0.5f * (float)Math.Sin(Math.PI * Math.Min(1.0, t * 1.05)));
+                if (t > 0.85f) rad[i] = Math.Max(rad[i], w * 0.62f);
+            }
+            using (var lb = new SolidBrush(Line))
+                for (int i = 0; i < n; i++) g.FillEllipse(lb, pts[i].X - rad[i] - 1.1f, pts[i].Y - rad[i] - 1.1f, (rad[i] + 1.1f) * 2, (rad[i] + 1.1f) * 2);
+            using (var fb = new SolidBrush(FurMid))
+            using (var wb = new SolidBrush(White))
+                for (int i = 0; i < n; i++)
+                {
+                    float t = i / (float)(n - 1);
+                    using (var p = Fluffy(new RectangleF(pts[i].X - rad[i], pts[i].Y - rad[i], rad[i] * 2, rad[i] * 2), 6, 0.07f))
+                        g.FillPath(t < 0.74f ? fb : wb, p);
+                }
+            using (var p = new Pen(Color.FromArgb(70, FurDark), w * 0.3f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                g.DrawBezier(p, P(a.X + 1.5f, a.Y + 2.5f), P(b.X + 1.5f, b.Y + 2.5f), P(c.X + 1.5f, c.Y + 2.5f), P(d.X + 1.5f, d.Y + 2.5f));
+            using (var p = new Pen(Color.FromArgb(150, FurLight), w * 0.3f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                g.DrawBezier(p, P(a.X - 1, a.Y - 2), P(b.X - 1, b.Y - 2), P(c.X - 1, c.Y - 2), P(d.X - 1, d.Y - 2));
+            var tip = new RectangleF(pts[n - 1].X - rad[n - 1], pts[n - 1].Y - rad[n - 1], rad[n - 1] * 2, rad[n - 1] * 2);
+            using (var p = Fluffy(tip, 7, 0.08f)) Fill(g, p, White, WhiteShade, false);
         }
 
-        static void Leg(Graphics g, float x, float top, float h)
+        static void Leg(Graphics g, float x, float top, float h, bool back)
         {
             float w = 11, r = 5;
             using (var path = new GraphicsPath())
@@ -584,104 +662,148 @@ namespace LuckyPet
                 path.AddLine(x + w, top + r, x + w, top + h - r);
                 path.AddArc(x, top + h - r * 2, w, r * 2, 0, 180);
                 path.CloseFigure();
-                var rect = new RectangleF(x, top, w, h);
-                using (var b = Grad(rect, White, WhiteShade)) g.FillPath(b, path);
-                g.SetClip(path, CombineMode.Replace);
-                using (var b = Grad(new RectangleF(x, top, w, h * 0.45f), FurMid, FurLight)) g.FillRectangle(b, x, top, w, h * 0.45f);
-                g.ResetClip();
-                using (var p = new Pen(Line, 1.6f)) g.DrawPath(p, path);
+                Fill(g, path, back ? WhiteShade : White, back ? Color.FromArgb(178, 190, 214) : WhiteShade, false);
+                var old = g.Clip;
+                g.SetClip(path, CombineMode.Intersect);
+                using (var fp = EllipsePath(new RectangleF(x - 4, top - 10, w + 8, h * 0.45f + 12)))
+                    Fill(g, fp, back ? FurMid : FurLight, back ? FurDark : FurMid, false);
+                g.Clip = old;
+                using (var pen = new Pen(Line, 1.25f)) g.DrawPath(pen, path);
             }
-            Blob(g, x - 1.2f, top + h - 6.5f, w + 2.4f, 7.5f, White, WhiteShade, true);
-            using (var p = new Pen(Color.FromArgb(120, 70, 80, 110), 1f))
+            FillEl(g, new RectangleF(x - 1.4f, top + h - 6.5f, w + 2.8f, 7.5f), White, WhiteShade, true);
+            using (var p = new Pen(Color.FromArgb(130, 80, 92, 124), 0.9f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
             {
-                g.DrawLine(p, x + 3.6f, top + h - 3, x + 3.6f, top + h);
-                g.DrawLine(p, x + 7.4f, top + h - 3, x + 7.4f, top + h);
+                g.DrawLine(p, x + 3.4f, top + h - 3.2f, x + 3.4f, top + h - 0.6f);
+                g.DrawLine(p, x + 7.6f, top + h - 3.2f, x + 7.6f, top + h - 0.6f);
             }
         }
 
-        // Chibi husky head, facing right; snout points to +x
+        void Eye(Graphics g, float px, float py, float e, bool closed, bool happy, bool blink)
+        {
+            using (var lid = new Pen(Color.FromArgb(32, 36, 54), e * 0.17f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            {
+                if (closed) { g.DrawArc(lid, px - e / 2, py - e * 0.45f, e, e * 0.75f, 20, 140); return; }
+                if (happy) { g.DrawArc(lid, px - e / 2, py - e * 0.15f, e, e * 0.9f, 205, 130); return; }
+                if (blink) { g.DrawLine(lid, px - e / 2, py + e * 0.1f, px + e / 2, py + e * 0.1f); return; }
+                var er = new RectangleF(px - e / 2, py - e * 0.56f, e, e * 1.12f);
+                using (var b = new LinearGradientBrush(er, IrisTop, Iris1, LinearGradientMode.Vertical))
+                {
+                    var cb = new ColorBlend(3);
+                    cb.Colors = new[] { IrisTop, Iris2, Iris1 };
+                    cb.Positions = new[] { 0f, 0.5f, 1f };
+                    b.InterpolationColors = cb;
+                    g.FillEllipse(b, er);
+                }
+                float pw = e * (st == St.Chase ? 0.64f : 0.52f);
+                Solid(g, Color.FromArgb(14, 18, 32), px - pw / 2, py - pw / 2 + e * 0.06f, pw, pw * 1.05f);
+                using (var ring = new Pen(Color.FromArgb(150, 18, 46, 110), 0.8f)) g.DrawEllipse(ring, er);
+                using (var shine = new Pen(Color.FromArgb(170, 170, 255, 245), e * 0.09f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                    g.DrawArc(shine, er.X + e * 0.14f, er.Y + e * 0.2f, e * 0.72f, e * 0.8f, 40, 100);
+                Solid(g, Color.White, px - e * 0.4f, py - e * 0.46f, e * 0.42f, e * 0.42f);
+                Solid(g, Color.FromArgb(235, 255, 255, 255), px + e * 0.1f, py + e * 0.1f, e * 0.17f, e * 0.17f);
+                g.DrawArc(lid, er.X - e * 0.04f, er.Y - e * 0.02f, e * 1.08f, e * 1.1f, 200, 140);
+                g.DrawLine(lid, px + e * 0.48f, py - e * 0.3f, px + e * 0.66f, py - e * 0.44f); // lash flick
+            }
+        }
+
+        // Chibi husky head, facing right (3/4 view); snout points to +x
         void Head(Graphics g, float cx, float cy, float r, bool closed)
         {
             bool happy = st == St.Happy || st == St.Remind;
-            // ears
-            Curve(g, FurTop, FurMid, true, 0.3f, P(cx - r * 0.95f, cy - r * 0.2f), P(cx - r * 0.66f, cy - r * 1.45f), P(cx - r * 0.05f, cy - r * 0.8f));
-            Curve(g, FurTop, FurMid, true, 0.3f, P(cx - r * 0.02f, cy - r * 0.85f), P(cx + r * 0.52f, cy - r * 1.5f), P(cx + r * 0.9f, cy - r * 0.32f));
-            Curve(g, EarIn1, EarIn2, false, 0.35f, P(cx - r * 0.76f, cy - r * 0.45f), P(cx - r * 0.62f, cy - r * 1.15f), P(cx - r * 0.28f, cy - r * 0.78f));
-            Curve(g, EarIn1, EarIn2, false, 0.35f, P(cx + r * 0.2f, cy - r * 0.82f), P(cx + r * 0.5f, cy - r * 1.2f), P(cx + r * 0.7f, cy - r * 0.48f));
-            // cheek fluff
-            Curve(g, White, WhiteShade, true, 0.25f, P(cx - r * 0.8f, cy + r * 0.0f), P(cx - r * 1.14f, cy + r * 0.5f), P(cx - r * 0.55f, cy + r * 0.74f));
-            // head
-            var hr = new RectangleF(cx - r * 1.02f, cy - r * 0.95f, r * 2.04f, r * 1.86f);
-            using (var br = Grad(hr, FurTop, FurLight)) g.FillEllipse(br, hr);
-            using (var hp = new GraphicsPath())
+            // ears (far ear first)
+            Curve(g, FurMid, FurDark, true, 0.32f, P(cx - r * 0.95f, cy - r * 0.18f), P(cx - r * 0.68f, cy - r * 1.46f), P(cx - r * 0.04f, cy - r * 0.8f));
+            Curve(g, FurMid, FurDark, true, 0.32f, P(cx - r * 0.02f, cy - r * 0.86f), P(cx + r * 0.52f, cy - r * 1.52f), P(cx + r * 0.92f, cy - r * 0.3f));
+            Curve(g, EarIn1, EarIn2, false, 0.36f, P(cx - r * 0.77f, cy - r * 0.45f), P(cx - r * 0.64f, cy - r * 1.16f), P(cx - r * 0.27f, cy - r * 0.78f));
+            Curve(g, EarIn1, EarIn2, false, 0.36f, P(cx + r * 0.2f, cy - r * 0.83f), P(cx + r * 0.5f, cy - r * 1.22f), P(cx + r * 0.72f, cy - r * 0.46f));
+            using (var tuft = new Pen(Color.FromArgb(230, 255, 255, 255), 1f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
             {
-                hp.AddEllipse(hr);
-                g.SetClip(hp, CombineMode.Replace);
-                Blob(g, cx - r * 0.95f, cy - r * 0.02f, r * 1.9f, r * 1.05f, White, WhiteShade, false);        // white mask
-                Curve(g, White, White, false, 0.45f, P(cx - r * 0.2f, cy + r * 0.05f), P(cx - r * 0.02f, cy - r * 0.8f), P(cx + r * 0.16f, cy + r * 0.05f)); // forehead stripe
-                Solid(g, White, cx - r * 0.56f, cy - r * 0.52f, r * 0.28f, r * 0.17f);                         // eyebrow dots
-                Solid(g, White, cx + r * 0.16f, cy - r * 0.54f, r * 0.26f, r * 0.16f);
-                Solid(g, Color.FromArgb(50, 255, 255, 255), cx - r * 0.62f, cy - r * 0.88f, r * 0.8f, r * 0.42f); // top sheen
-                g.ResetClip();
+                for (int k = 0; k < 3; k++)
+                {
+                    g.DrawLine(tuft, cx - r * (0.62f - k * 0.1f), cy - r * 0.55f, cx - r * (0.58f - k * 0.08f), cy - r * (0.82f + k * 0.04f));
+                    g.DrawLine(tuft, cx + r * (0.36f + k * 0.1f), cy - r * 0.62f, cx + r * (0.42f + k * 0.07f), cy - r * (0.9f - k * 0.02f));
+                }
             }
-            using (var p = new Pen(Line, 1.6f)) g.DrawEllipse(p, hr);
-            // blush
-            Solid(g, Color.FromArgb(115, 255, 150, 182), cx - r * 0.74f, cy + r * 0.16f, r * 0.38f, r * 0.21f);
-            Solid(g, Color.FromArgb(100, 255, 150, 182), cx + r * 0.1f, cy + r * 0.2f, r * 0.3f, r * 0.18f);
-            // snout + nose
-            Blob(g, cx + r * 0.3f, cy + r * 0.08f, r * 0.92f, r * 0.62f, White, WhiteShade, true);
-            Blob(g, cx + r * 0.98f, cy + r * 0.07f, r * 0.34f, r * 0.26f, Color.FromArgb(78, 84, 104), NoseC, false);
-            Solid(g, Color.FromArgb(210, 255, 255, 255), cx + r * 1.04f, cy + r * 0.1f, r * 0.11f, r * 0.06f);
-            using (var mp = new Pen(Color.FromArgb(70, 74, 96), 1.3f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            // fluffy cheeks
+            using (var ck = Fluffy(new RectangleF(cx - r * 1.16f, cy + r * 0.0f, r * 0.74f, r * 0.66f), 6, 0.16f)) Fill(g, ck, White, WhiteShade, true);
+            using (var ck = Fluffy(new RectangleF(cx + r * 0.46f, cy + r * 0.12f, r * 0.66f, r * 0.58f), 6, 0.16f)) Fill(g, ck, White, WhiteShade, true);
+            // head
+            var hr = new RectangleF(cx - r * 1.02f, cy - r * 0.96f, r * 2.04f, r * 1.88f);
+            using (var hp = EllipsePath(hr))
             {
+                Fill(g, hp, FurMid, FurDark, false);
+                TopShade(g, hp, new RectangleF(hr.X, hr.Y, hr.Width, r * 0.85f), Color.FromArgb(150, FurDark));
+                var old = g.Clip;
+                g.SetClip(hp, CombineMode.Intersect);
+                FillEl(g, new RectangleF(cx - r * 0.98f, cy + r * 0.1f, r * 1.96f, r * 1.0f), White, WhiteShade, false);    // lower mask
+                FillEl(g, new RectangleF(cx - r * 0.68f, cy - r * 0.3f, r * 0.56f, r * 0.54f), White, WhiteShade, false);   // goggle L
+                FillEl(g, new RectangleF(cx + r * 0.07f, cy - r * 0.32f, r * 0.54f, r * 0.52f), White, WhiteShade, false);  // goggle R
+                Curve(g, White, White, false, 0.45f, P(cx - r * 0.13f, cy + r * 0.12f), P(cx - r * 0.02f, cy - r * 0.78f), P(cx + r * 0.1f, cy + r * 0.12f));
+                Solid(g, Color.FromArgb(55, 255, 255, 255), cx - r * 0.66f, cy - r * 0.9f, r * 0.8f, r * 0.4f);
+                g.Clip = old;
+                RimLight(g, hr, 195, 75);
+                using (var pen = new Pen(Line, 1.25f)) g.DrawPath(pen, hp);
+            }
+            // blush
+            Solid(g, Color.FromArgb(120, 255, 150, 185), cx - r * 0.78f, cy + r * 0.2f, r * 0.4f, r * 0.2f);
+            Solid(g, Color.FromArgb(100, 255, 150, 185), cx + r * 0.08f, cy + r * 0.24f, r * 0.32f, r * 0.17f);
+            // muzzle
+            var mr = new RectangleF(cx + r * 0.32f, cy + r * 0.1f, r * 0.92f, r * 0.62f);
+            FillEl(g, mr, White, WhiteShade, true);
+            Solid(g, Color.FromArgb(40, 60, 70, 100), mr.X + r * 0.12f, mr.Bottom - r * 0.18f, r * 0.6f, r * 0.14f);
+            using (var dot = new SolidBrush(Color.FromArgb(120, 120, 134, 166)))
+                for (int k = 0; k < 3; k++) g.FillEllipse(dot, cx + r * (0.62f + k * 0.11f), cy + r * (0.42f - k * 0.03f), 1.3f, 1.3f);
+            // nose
+            FillEl(g, new RectangleF(cx + r * 1.0f, cy + r * 0.08f, r * 0.33f, r * 0.24f), Color.FromArgb(120, 126, 150), NoseC, false);
+            Solid(g, Color.FromArgb(225, 255, 255, 255), cx + r * 1.06f, cy + r * 0.11f, r * 0.12f, r * 0.07f);
+            using (var mp = new Pen(Color.FromArgb(76, 80, 104), 1.15f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            {
+                g.DrawLine(mp, cx + r * 1.16f, cy + r * 0.32f, cx + r * 1.14f, cy + r * 0.4f);
                 if (happy || st == St.Chase)
                 {
-                    Solid(g, Color.FromArgb(120, 50, 70), cx + r * 0.62f, cy + r * 0.4f, r * 0.44f, r * 0.3f);
-                    Blob(g, cx + r * 0.68f, cy + r * 0.5f, r * 0.32f, r * 0.44f, Tongue1, Tongue2, false);
-                    g.DrawLine(mp, cx + r * 0.84f, cy + r * 0.56f, cx + r * 0.84f, cy + r * 0.78f);
+                    using (var mouth = EllipsePath(new RectangleF(cx + r * 0.8f, cy + r * 0.38f, r * 0.44f, r * 0.32f)))
+                    using (var b = new SolidBrush(Color.FromArgb(118, 46, 68))) g.FillPath(b, mouth);
+                    FillEl(g, new RectangleF(cx + r * 0.86f, cy + r * 0.5f, r * 0.32f, r * 0.44f), Tongue1, Tongue2, false);
+                    g.DrawLine(mp, cx + r * 1.02f, cy + r * 0.56f, cx + r * 1.02f, cy + r * 0.8f);
+                    Solid(g, Color.FromArgb(150, 255, 255, 255), cx + r * 0.9f, cy + r * 0.56f, r * 0.08f, r * 0.12f);
                 }
                 else
                 {
-                    g.DrawArc(mp, cx + r * 0.86f, cy + r * 0.32f, r * 0.2f, r * 0.17f, 0, 180);
-                    g.DrawArc(mp, cx + r * 1.05f, cy + r * 0.32f, r * 0.2f, r * 0.17f, 0, 180);
+                    g.DrawArc(mp, cx + r * 0.94f, cy + r * 0.32f, r * 0.2f, r * 0.16f, 0, 180);
+                    g.DrawArc(mp, cx + r * 1.13f, cy + r * 0.32f, r * 0.2f, r * 0.16f, 0, 180);
                 }
             }
             // eyes
-            float e = r * 0.42f;
             bool blink = (frame % 150) < 4;
-            using (var p = new Pen(Color.FromArgb(40, 46, 66), 2.2f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
-            {
-                foreach (var c in new[] { P(cx - r * 0.4f, cy - r * 0.14f), P(cx + r * 0.32f, cy - r * 0.16f) })
-                {
-                    float px = c.X, py = c.Y;
-                    if (closed) g.DrawArc(p, px - e / 2, py - e / 2, e, e * 0.8f, 15, 150);
-                    else if (happy) g.DrawArc(p, px - e / 2, py - e * 0.2f, e, e, 200, 140);
-                    else if (blink) g.DrawLine(p, px - e / 2, py + 1, px + e / 2, py + 1);
-                    else
-                    {
-                        var er = new RectangleF(px - e / 2, py - e * 0.54f, e, e * 1.08f);
-                        using (var ep = new GraphicsPath())
-                        {
-                            ep.AddEllipse(er);
-                            using (var pb = new PathGradientBrush(ep) { CenterColor = Iris1, SurroundColors = new[] { Iris2 }, CenterPoint = P(px, py + e * 0.18f) })
-                                g.FillEllipse(pb, er);
-                        }
-                        float pw = e * (st == St.Chase ? 0.62f : 0.5f);
-                        Solid(g, Color.FromArgb(18, 22, 34), px - pw / 2, py - pw / 2 + e * 0.04f, pw, pw);
-                        using (var op = new Pen(Color.FromArgb(40, 46, 66), 1.3f)) g.DrawEllipse(op, er);
-                        Solid(g, Color.White, px - e * 0.38f, py - e * 0.44f, e * 0.38f, e * 0.38f);
-                        Solid(g, Color.FromArgb(220, 255, 255, 255), px + e * 0.1f, py + e * 0.12f, e * 0.17f, e * 0.17f);
-                    }
-                }
-            }
+            Eye(g, cx - r * 0.4f, cy - r * 0.1f, r * 0.46f, closed, happy, blink);
+            Eye(g, cx + r * 0.33f, cy - r * 0.12f, r * 0.42f, closed, happy, blink);
         }
 
         void Collar(Graphics g, float cx, float cy, float w)
         {
             using (var p = new Pen(Collar2, 5f) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawArc(p, cx - w / 2, cy - 7, w, 12, 25, 130);
-            using (var p = new Pen(Collar1, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawArc(p, cx - w / 2, cy - 8, w, 12, 35, 110);
-            Blob(g, cx - 4, cy + 3.5f, 8, 8, White, TagColor, true);
-            Solid(g, Color.White, cx - 2.4f, cy + 4.8f, 2.6f, 2.6f);
+            using (var p = new Pen(Collar1, 2f) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawArc(p, cx - w / 2, cy - 8, w, 12, 38, 104);
+            var tr = new RectangleF(cx - 4.2f, cy + 3.4f, 8.4f, 8.4f);
+            FillEl(g, tr, White, TagColor, true);
+            using (var b = new SolidBrush(Color.FromArgb(150, 120, 134, 166)))
+            {
+                g.FillEllipse(b, cx - 1.6f, cy + 7.6f, 3.2f, 2.6f);
+                g.FillEllipse(b, cx - 2.4f, cy + 5.6f, 1.3f, 1.3f); g.FillEllipse(b, cx - 0.65f, cy + 5.0f, 1.3f, 1.3f); g.FillEllipse(b, cx + 1.1f, cy + 5.6f, 1.3f, 1.3f);
+            }
+            Solid(g, Color.White, tr.X + 1.6f, tr.Y + 1.4f, 2.2f, 2.2f);
+        }
+
+        void Body(Graphics g, RectangleF r, float saddleH)
+        {
+            using (var bp = Fluffy(r, 14, 0.035f))
+            {
+                Fill(g, bp, FurMid, FurDark, true);
+                TopShade(g, bp, new RectangleF(r.X, r.Y - 2, r.Width, saddleH), Color.FromArgb(215, FurDark));
+                var old = g.Clip;
+                g.SetClip(bp, CombineMode.Intersect);
+                FillEl(g, new RectangleF(r.X + r.Width * 0.18f, r.Bottom - r.Height * 0.42f, r.Width * 0.72f, r.Height * 0.62f), White, WhiteShade, false);
+                g.Clip = old;
+                RimLight(g, r, 200, 80);
+            }
         }
 
         void DrawStand(Graphics g)
@@ -691,13 +813,12 @@ namespace LuckyPet
             float bob = walking ? (float)Math.Abs(Math.Sin(frame * speed)) * 2 : 0;
             float wag = st == St.Happy || st == St.Chase ? (float)Math.Sin(frame * 0.8) * 9 : (float)Math.Sin(frame * 0.25) * 4;
             float ph = walking ? (float)Math.Sin(frame * speed) * 4 : 0;
-            Tail(g, P(34, 86 - bob), P(14, 80), P(10 + wag * 0.4f, 50 + wag), P(30 + wag * 0.3f, 50 + wag * 0.5f), 12);
-            Leg(g, 36 - ph, 93 - bob, 22 + bob); Leg(g, 49 + ph, 93 - bob, 22 + bob);
-            Blob(g, 28, 72 - bob, 68, 36, FurTop, FurLight, true);
-            Blob(g, 42, 94 - bob, 42, 12, White, WhiteShade, false);
-            Leg(g, 70 + ph, 93 - bob, 22 + bob); Leg(g, 82 - ph, 93 - bob, 22 + bob);
-            Curve(g, White, WhiteShade, true, 0.45f, P(76, 78 - bob), P(88, 74 - bob), P(98, 82 - bob), P(95, 94 - bob),
-                  P(88, 100 - bob), P(82, 95 - bob), P(76, 100 - bob), P(73, 89 - bob));
+            Tail(g, P(34, 86 - bob), P(14, 80), P(10 + wag * 0.4f, 50 + wag), P(30 + wag * 0.3f, 50 + wag * 0.5f), 13);
+            Leg(g, 36 - ph, 93 - bob, 22 + bob, true); Leg(g, 49 + ph, 93 - bob, 22 + bob, true);
+            Body(g, new RectangleF(28, 72 - bob, 68, 36), 14);
+            Solid(g, Color.FromArgb(45, 20, 28, 60), 70, 74 - bob, 28, 14); // occlusion under the head
+            Leg(g, 70 + ph, 93 - bob, 22 + bob, false); Leg(g, 82 - ph, 93 - bob, 22 + bob, false);
+            using (var ruff = Fluffy(new RectangleF(72, 72 - bob, 28, 30), 7, 0.13f)) Fill(g, ruff, White, WhiteShade, true);
             Collar(g, 88, 78 - bob, 26);
             Head(g, 92, 56 - bob, 24, false);
         }
@@ -705,22 +826,22 @@ namespace LuckyPet
         void DrawSit(Graphics g)
         {
             float wag = st == St.Remind ? (float)Math.Sin(frame * 0.6) * 5 : (float)Math.Sin(frame * 0.12) * 3;
-            Tail(g, P(46, 108), P(24, 116), P(14 + wag, 100), P(24 + wag, 86), 12);
-            Blob(g, 36, 94, 30, 21, FurTop, FurLight, true);
-            Blob(g, 42, 68, 46, 48, FurTop, FurLight, true);
-            Curve(g, White, WhiteShade, true, 0.45f, P(52, 76), P(66, 70), P(80, 76), P(80, 92), P(74, 108), P(66, 102), P(58, 108), P(52, 92));
-            Leg(g, 55, 95, 21); Leg(g, 69, 95, 21);
+            Tail(g, P(46, 108), P(24, 116), P(14 + wag, 100), P(24 + wag, 86), 13);
+            using (var hp = Fluffy(new RectangleF(36, 93, 32, 22), 8, 0.04f)) Fill(g, hp, FurMid, FurDark, true);
+            Body(g, new RectangleF(42, 66, 46, 50), 18);
+            using (var chest = Fluffy(new RectangleF(52, 70, 30, 40), 8, 0.1f)) Fill(g, chest, White, WhiteShade, true);
+            Leg(g, 55, 95, 21, false); Leg(g, 69, 95, 21, false);
             Collar(g, 66, 70, 30);
-            Head(g, 66, 47, 25, false);
+            Head(g, 66, 46, 25, false);
         }
 
         void DrawSleep(Graphics g)
         {
             float br = (float)Math.Sin(frame * 0.08) * 1.3f;
-            Blob(g, 26, 88 - br, 72, 28 + br, FurTop, FurLight, true);
-            Blob(g, 40, 104 - br, 40, 10, White, WhiteShade, false);
-            Blob(g, 86, 107, 18, 9, White, WhiteShade, true);
-            Tail(g, P(30, 104), P(12, 118), P(56, 123), P(86, 116), 12);
+            Body(g, new RectangleF(26, 86 - br, 72, 30 + br), 12);
+            FillEl(g, new RectangleF(84, 106, 18, 9), White, WhiteShade, true);
+            FillEl(g, new RectangleF(92, 108.5f, 16, 8), White, WhiteShade, true);
+            Tail(g, P(30, 104), P(12, 118), P(56, 124), P(88, 115), 13);
             Collar(g, 80, 86, 24);
             Head(g, 82, 92, 21, true);
         }
