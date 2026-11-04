@@ -14,6 +14,8 @@ A tiny Husky that lives on top of your Windows taskbar. It walks, sits, naps, ch
 - **Health reminder.** Every 45 minutes Lucky shows a water-drop bubble and a notification: drink water and stretch.
 - **Hides automatically** while a full-screen app or game is in the foreground.
 - **Tray menu.** Pet, sleep, wake, toggle the reminder, toggle *start with Windows*, quit.
+- **Sticker style.** A white die-cut outline keeps Lucky readable on dark wallpapers and transparent taskbars.
+- **Three sizes.** Pick Nhỏ / Vừa / Lớn from the tray menu. The choice is saved to memory.
 - DPI aware with per-pixel alpha (layered window). Transparent pixels pass clicks through.
 
 ## Memory 🧠

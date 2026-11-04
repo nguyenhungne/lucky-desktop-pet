@@ -1,6 +1,7 @@
 // Lucky - a tiny Husky desktop pet that lives on top of your Windows taskbar.
 // Pure WinForms + GDI+, no dependencies. Build with build.ps1 (uses the C# compiler bundled with Windows).
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Globalization;
@@ -45,6 +46,7 @@ namespace LuckyPet
         public DateTime FirstMet = DateTime.Now, LastSeen = DateTime.Now;
         public int Pets, Chases, Reminders, Naps, Drops, DayMilestone, PetMilestone;
         public double Affection = 60, PosX = -1;
+        public float Size = 1.4f;
         public int Facing = 1;
         public bool RemindOn = true;
 
@@ -83,6 +85,7 @@ namespace LuckyPet
                         case "pos_x": m.PosX = double.Parse(v, CI); break;
                         case "facing": m.Facing = int.Parse(v, CI) < 0 ? -1 : 1; break;
                         case "remind_on": m.RemindOn = v == "true"; break;
+                        case "size": m.Size = Math.Max(0.8f, Math.Min(2.5f, float.Parse(v, CI))); break;
                     }
                 }
                 catch { /* ignore a bad line, keep the rest */ }
@@ -108,6 +111,7 @@ namespace LuckyPet
             sb.AppendLine("pos_x=" + PosX.ToString("0", CI));
             sb.AppendLine("facing=" + Facing.ToString(CI));
             sb.AppendLine("remind_on=" + (RemindOn ? "true" : "false"));
+            sb.AppendLine("size=" + Size.ToString("0.0", CI));
             string tmp = FilePath + ".tmp";
             File.WriteAllText(tmp, sb.ToString(), new UTF8Encoding(false));
             if (File.Exists(FilePath)) File.Replace(tmp, FilePath, null); else File.Move(tmp, FilePath);
@@ -140,8 +144,9 @@ namespace LuckyPet
         const int RemindMinutes = 45;
         static readonly int[] DayMilestones = { 3, 7, 30, 100, 365 };
         static readonly int[] PetMilestones = { 10, 50, 100, 500, 1000 };
-        float S; int PW, PH;
-        Bitmap canvas;
+        float S, dpiScale = 1; int PW, PH;
+        Bitmap canvas, petLayer;
+        System.Drawing.Imaging.ImageAttributes whiteAttr;
         Timer timer;
         Random rnd = new Random();
         St st = St.Sit;
@@ -171,47 +176,65 @@ namespace LuckyPet
         // Offline renderer for README screenshots / visual checks (no tray, no memory writes).
         public PetForm(bool snapshotOnly)
         {
-            S = 1; PW = CW; PH = CH; mem = new Memory(); mem.Affection = 90;
+            mem = new Memory(); mem.Affection = 90;
             timer = new Timer();
+            S = 2; Alloc();
         }
 
         public void Snapshot(string path)
         {
             var poses = new[] { St.Walk, St.Sit, St.Happy, St.Chase, St.Sleep, St.Remind };
-            int tw = 260, th = 240;
-            using (var sheet = new Bitmap(tw * poses.Length, th))
+            using (var sheet = new Bitmap(PW * poses.Length, PH))
             using (var g = Graphics.FromImage(sheet))
             {
                 g.Clear(Color.FromArgb(16, 30, 66));
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
                 y = Ground();
                 for (int i = 0; i < poses.Length; i++)
                 {
                     st = poses[i]; frame = 20; dir = 1;
-                    var s0 = g.Save();
-                    g.TranslateTransform(i * tw, 0); g.ScaleTransform(2, 2);
-                    var s1 = g.Save();
-                    if (st == St.Sleep) DrawSleep(g);
-                    else if (st == St.Sit || st == St.Remind) DrawSit(g);
-                    else DrawStand(g);
-                    g.Restore(s1);
-                    DrawOverlay(g);
-                    g.Restore(s0);
+                    RenderFrame();
+                    g.DrawImageUnscaled(canvas, i * PW, 0);
                 }
                 sheet.Save(path, System.Drawing.Imaging.ImageFormat.Png);
             }
         }
 
+        void Alloc()
+        {
+            PW = (int)(CW * S); PH = (int)(CH * S);
+            if (canvas != null) canvas.Dispose();
+            if (petLayer != null) petLayer.Dispose();
+            canvas = new Bitmap(PW, PH, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            petLayer = new Bitmap(PW, PH, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            if (whiteAttr == null)
+            {
+                // Paint every pixel near-white while keeping its alpha -> used for the sticker outline
+                var cm = new System.Drawing.Imaging.ColorMatrix(new float[][] {
+                    new float[] { 0, 0, 0, 0, 0 }, new float[] { 0, 0, 0, 0, 0 }, new float[] { 0, 0, 0, 0, 0 },
+                    new float[] { 0, 0, 0, 1, 0 }, new float[] { 0.95f, 0.97f, 1, 0, 1 } });
+                whiteAttr = new System.Drawing.Imaging.ImageAttributes();
+                whiteAttr.SetColorMatrix(cm);
+            }
+        }
+
+        void SetSize(float z)
+        {
+            mem.Size = z; dirty = true;
+            S = dpiScale * z; Alloc();
+            var wa = Screen.PrimaryScreen.WorkingArea;
+            x = Math.Max(wa.Left, Math.Min(wa.Right - PW, x));
+            y = Ground();
+            Render();
+        }
+
         public PetForm()
         {
             FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; StartPosition = FormStartPosition.Manual;
-            using (var g = Graphics.FromHwnd(IntPtr.Zero)) S = g.DpiX / 96f;
-            PW = (int)(CW * S); PH = (int)(CH * S);
-            canvas = new Bitmap(PW, PH, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-
+            using (var g = Graphics.FromHwnd(IntPtr.Zero)) dpiScale = g.DpiX / 96f;
             bool isNew;
             mem = Memory.Load(out isNew);
+            S = dpiScale * mem.Size;
+            Alloc();
             remindOn = mem.RemindOn;
             dir = mem.Facing;
             var wa = Screen.PrimaryScreen.WorkingArea;
@@ -225,6 +248,18 @@ namespace LuckyPet
             menu.Items.Add("Kỷ niệm với Lucky 📖", null, delegate { ShowMemories(); });
             menu.Items.Add("Cho Lucky đi ngủ 💤", null, delegate { SetState(St.Sleep, 1200); });
             menu.Items.Add("Đánh thức Lucky", null, delegate { SetState(St.Walk, 150); });
+            var sizeMenu = new ToolStripMenuItem("Kích thước");
+            foreach (var opt in new[] { new KeyValuePair<string, float>("Nhỏ", 1.0f), new KeyValuePair<string, float>("Vừa", 1.4f), new KeyValuePair<string, float>("Lớn", 1.8f) })
+            {
+                var it = new ToolStripMenuItem(opt.Key) { Checked = Math.Abs(mem.Size - opt.Value) < 0.05f, Tag = opt.Value };
+                it.Click += delegate(object s, EventArgs e)
+                {
+                    foreach (ToolStripMenuItem o in sizeMenu.DropDownItems) o.Checked = o == s;
+                    SetSize((float)((ToolStripMenuItem)s).Tag);
+                };
+                sizeMenu.DropDownItems.Add(it);
+            }
+            menu.Items.Add(sizeMenu);
             var rem = new ToolStripMenuItem("Nhắc uống nước & vươn vai (mỗi 45 phút)") { Checked = remindOn, CheckOnClick = true };
             rem.CheckedChanged += delegate { remindOn = rem.Checked; nextRemind = DateTime.Now.AddMinutes(RemindMinutes); dirty = true; };
             menu.Items.Add(rem);
@@ -446,23 +481,47 @@ namespace LuckyPet
         }
 
         // ---------- rendering ----------
-        void Render()
+        void Render() { RenderFrame(); Push(); }
+
+        void RenderFrame()
         {
-            using (var g = Graphics.FromImage(canvas))
+            // 1) the pet itself on its own layer
+            using (var g = Graphics.FromImage(petLayer))
             {
                 g.Clear(Color.Transparent);
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.PixelOffsetMode = PixelOffsetMode.HighQuality;
                 g.ScaleTransform(S, S);
-                var state = g.Save();
                 if (dir < 0) { g.TranslateTransform(CW, 0); g.ScaleTransform(-1, 1); }
                 if (st == St.Sleep) DrawSleep(g);
                 else if (st == St.Sit || st == St.Remind) DrawSit(g);
                 else DrawStand(g);
-                g.Restore(state);
+            }
+            // 2) ground shadow + white sticker outline + pet + overlays
+            using (var g = Graphics.FromImage(canvas))
+            {
+                g.Clear(Color.Transparent);
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                var s0 = g.Save();
+                g.ScaleTransform(S, S);
+                if (dir < 0) { g.TranslateTransform(CW, 0); g.ScaleTransform(-1, 1); }
+                if (st == St.Sleep) GroundShadow(g, 62, 80);
+                else if (st == St.Sit || st == St.Remind) GroundShadow(g, 64, 64);
+                else GroundShadow(g, 62, 76);
+                g.Restore(s0);
+                float o = 1.7f * S;
+                for (int k = 0; k < 12; k++)
+                {
+                    double a = k * Math.PI / 6;
+                    int dx = (int)Math.Round(Math.Cos(a) * o), dy = (int)Math.Round(Math.Sin(a) * o);
+                    g.DrawImage(petLayer, new Rectangle(dx, dy, PW, PH), 0, 0, PW, PH, GraphicsUnit.Pixel, whiteAttr);
+                }
+                g.DrawImageUnscaled(petLayer, 0, 0);
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+                g.ScaleTransform(S, S);
                 DrawOverlay(g);
             }
-            Push();
         }
 
         void Push()
@@ -632,7 +691,6 @@ namespace LuckyPet
             float bob = walking ? (float)Math.Abs(Math.Sin(frame * speed)) * 2 : 0;
             float wag = st == St.Happy || st == St.Chase ? (float)Math.Sin(frame * 0.8) * 9 : (float)Math.Sin(frame * 0.25) * 4;
             float ph = walking ? (float)Math.Sin(frame * speed) * 4 : 0;
-            GroundShadow(g, 62, 74);
             Tail(g, P(34, 86 - bob), P(14, 80), P(10 + wag * 0.4f, 50 + wag), P(30 + wag * 0.3f, 50 + wag * 0.5f), 12);
             Leg(g, 36 - ph, 93 - bob, 22 + bob); Leg(g, 49 + ph, 93 - bob, 22 + bob);
             Blob(g, 28, 72 - bob, 68, 36, FurTop, FurLight, true);
@@ -647,7 +705,6 @@ namespace LuckyPet
         void DrawSit(Graphics g)
         {
             float wag = st == St.Remind ? (float)Math.Sin(frame * 0.6) * 5 : (float)Math.Sin(frame * 0.12) * 3;
-            GroundShadow(g, 64, 62);
             Tail(g, P(46, 108), P(24, 116), P(14 + wag, 100), P(24 + wag, 86), 12);
             Blob(g, 36, 94, 30, 21, FurTop, FurLight, true);
             Blob(g, 42, 68, 46, 48, FurTop, FurLight, true);
@@ -660,7 +717,6 @@ namespace LuckyPet
         void DrawSleep(Graphics g)
         {
             float br = (float)Math.Sin(frame * 0.08) * 1.3f;
-            GroundShadow(g, 62, 78);
             Blob(g, 26, 88 - br, 72, 28 + br, FurTop, FurLight, true);
             Blob(g, 40, 104 - br, 40, 10, White, WhiteShade, false);
             Blob(g, 86, 107, 18, 9, White, WhiteShade, true);
