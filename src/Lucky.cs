@@ -159,10 +159,31 @@ namespace LuckyPet
         [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr o);
         [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr o);
 
+        [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int i);
+        [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr h, int i, int v);
+
+        public byte PushAlpha = 255;
+        bool clickThrough;
+        // WS_EX_TRANSPARENT: mouse input passes through to whatever is underneath
+        public bool ClickThrough
+        {
+            get { return clickThrough; }
+            set
+            {
+                if (value == clickThrough) return;
+                clickThrough = value;
+                if (IsHandleCreated)
+                {
+                    int ex = GetWindowLong(Handle, -20);
+                    SetWindowLong(Handle, -20, value ? (ex | 0x20) : (ex & ~0x20));
+                }
+            }
+        }
+
         public LayerWin() { FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; StartPosition = FormStartPosition.Manual; }
         protected override CreateParams CreateParams
         {
-            get { var cp = base.CreateParams; cp.ExStyle |= 0x80000 | 0x80 | 0x8; return cp; } // layered | toolwindow | topmost
+            get { var cp = base.CreateParams; cp.ExStyle |= 0x80000 | 0x80 | 0x8; if (clickThrough) cp.ExStyle |= 0x20; return cp; } // layered | toolwindow | topmost
         }
         protected override bool ShowWithoutActivation { get { return true; } }
 
@@ -171,14 +192,14 @@ namespace LuckyPet
             IntPtr screenDc = GetDC(IntPtr.Zero), memDc = CreateCompatibleDC(screenDc);
             IntPtr hb = bmp.GetHbitmap(Color.FromArgb(0)), old = SelectObject(memDc, hb);
             var size = new SIZE(bmp.Width, bmp.Height); var src = new POINT(0, 0); var dst = new POINT(x, y);
-            var bf = new BLENDFUNCTION { BlendOp = 0, BlendFlags = 0, SourceConstantAlpha = 255, AlphaFormat = 1 };
+            var bf = new BLENDFUNCTION { BlendOp = 0, BlendFlags = 0, SourceConstantAlpha = PushAlpha, AlphaFormat = 1 };
             UpdateLayeredWindow(Handle, screenDc, ref dst, ref size, memDc, ref src, 0, ref bf, 2);
             SelectObject(memDc, old); DeleteObject(hb); DeleteDC(memDc); ReleaseDC(IntPtr.Zero, screenDc);
         }
     }
 
     // ================================================================ the pet
-    class PetForm : LayerWin
+    partial class PetForm : LayerWin
     {
         [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
         [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
@@ -249,14 +270,15 @@ namespace LuckyPet
 
             ballWin = new LayerWin(); boneWin = new LayerWin(); bubbleWin = new LayerWin();
             ballWin.MouseDown += delegate { KickBall(); };
-            bubbleWin.MouseDown += delegate { bubbleUntil = 0; };
+            bubbleWin.MouseDown += OnBubbleDown;
+            InitFeatures();
 
             var menu = new ContextMenuStrip();
             menu.Items.Add("Xoa đầu Lucky 💕", null, delegate { Pet(); });
             menu.Items.Add("Ném bóng 🎾", null, delegate { ThrowBall(true); });
             menu.Items.Add("Cho ăn xương 🦴", null, delegate { DropBone(); });
             focusItem = new ToolStripMenuItem("Tập trung 25 phút 🎯");
-            focusItem.Click += delegate { ToggleFocus(); };
+            focusItem.Click += delegate { if (cfg.F3) PomoMenuToggle(); else ToggleFocus(); };
             menu.Items.Add(focusItem);
             menu.Items.Add("Cửa hàng & cấp độ 🏆", null, delegate { OpenShop(); });
             menu.Items.Add("Kỷ niệm với Lucky 📖", null, delegate { ShowMemories(); });
@@ -281,6 +303,7 @@ namespace LuckyPet
             var boot = new ToolStripMenuItem("Khởi động cùng Windows") { Checked = StartupEnabled(), CheckOnClick = true };
             boot.CheckedChanged += delegate { SetStartup(boot.Checked); };
             menu.Items.Add(boot);
+            AddFeatureMenu(menu);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Tạm biệt Lucky (thoát)", null, delegate { SaveMem(); tray.Visible = false; Application.Exit(); });
 
@@ -288,6 +311,7 @@ namespace LuckyPet
             tray.MouseClick += delegate(object s, MouseEventArgs e) { if (e.Button == MouseButtons.Left) Pet(); };
             tray.DoubleClick += delegate { OpenShop(); };
             ContextMenuStrip = menu;
+            UpdateTrayIcon();
             UpdateTooltip();
 
             MouseDown += OnDown; MouseMove += OnMove; MouseUp += OnUp;
@@ -314,7 +338,7 @@ namespace LuckyPet
             using (var ia = new ImageAttributes())
             {
                 ia.SetWrapMode(WrapMode.TileFlipXY);
-                foreach (var n in AnimNames)
+                foreach (var n in SpriteNames())
                 {
                     using (var s = asm.GetManifestResourceStream(n + ".png"))
                     using (var sheet = new Bitmap(s))
@@ -353,6 +377,11 @@ namespace LuckyPet
 
         string Anim(out int fps)
         {
+            bool once;
+            string ma = ModeAnim(out fps, out once);
+            curOnce = once;
+            if (ma != null) return ma;
+            if (st == St.Drag && cfg != null && cfg.F7 && HasAnim("dragged")) { fps = Fps("dragged"); return "dragged"; }
             switch (st)
             {
                 case St.Walk: fps = 10; return "walk";
@@ -452,6 +481,8 @@ namespace LuckyPet
         void UpdateTooltip()
         {
             if (tray == null) return;
+            string pt = cfg != null ? PomoTooltipText() : null;
+            if (pt != null) { tray.Text = pt.Length > 63 ? pt.Substring(0, 63) : pt; return; }
             string t;
             if (st == St.Focus) t = "Lucky 🎯 tập trung · còn " + Math.Max(0, (int)Math.Ceiling((focusEnd - DateTime.Now).TotalMinutes)) + " phút";
             else t = "Lucky Lv." + mem.Level + " · " + mem.Coins + " xu · ♥ " + (int)Math.Round(mem.Affection) + "%" + (mem.Hungry ? " · đói" : "");
@@ -462,6 +493,7 @@ namespace LuckyPet
         {
             mem.PosX = x; mem.Facing = dir; mem.RemindOn = remindOn; mem.LastSeen = DateTime.Now;
             try { mem.Save(); } catch { }
+            if (stats != null) stats.Save();
             dirty = false; lastSave = DateTime.Now;
         }
 
@@ -475,7 +507,7 @@ namespace LuckyPet
             if (s != st) animStart = Environment.TickCount;
             st = s; stateTicks = ticks;
             if (s == St.Happy && y >= Ground() - 1) vy = -6 * S;
-            timer.Interval = (s == St.Sleep || s == St.Sit || s == St.Focus || s == St.Eat) ? 80 : 40;
+            timer.Interval = ((s == St.Sleep || s == St.Sit || s == St.Focus || s == St.Eat) ? 80 : 40) * (lowPower ? 2 : 1);
         }
 
         void NextRandomState()
@@ -582,59 +614,7 @@ namespace LuckyPet
             UpdateTooltip();
         }
 
-        void Say(string text, int ms)
-        {
-            bubbleText = text; bubbleUntil = Environment.TickCount + ms;
-            if (!hiddenFs) bubbleWin.Show();
-        }
-
-        void StepBubble()
-        {
-            if (bubbleText == null) return;
-            if (Environment.TickCount > bubbleUntil) { bubbleText = null; bubbleWin.Hide(); return; }
-            using (var f = new Font("Segoe UI", 9f))
-            {
-                var flags = TextFormatFlags.WordBreak | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding;
-                int maxW = (int)(150 * dpiScale);
-                var ts = TextRenderer.MeasureText(bubbleText, f, new Size(maxW, 1000), flags);
-                int pad = (int)(8 * dpiScale), tail = (int)(7 * dpiScale);
-                int w = ts.Width + pad * 2, h = ts.Height + pad * 2;
-                using (var opaque = new Bitmap(w, h + tail, PixelFormat.Format32bppArgb))
-                using (var outBmp = new Bitmap(w, h + tail, PixelFormat.Format32bppArgb))
-                {
-                    using (var g = Graphics.FromImage(opaque))
-                    {
-                        g.Clear(Color.FromArgb(250, 252, 255));
-                        TextRenderer.DrawText(g, bubbleText, f, new Rectangle(pad, pad, ts.Width, ts.Height), Color.FromArgb(40, 52, 84), Color.FromArgb(250, 252, 255), flags);
-                    }
-                    using (var g = Graphics.FromImage(outBmp))
-                    using (var path = Bubble(0.75f, 0.75f, w - 1.5f, h - 1.5f, 10 * dpiScale, tail))
-                    {
-                        g.SmoothingMode = SmoothingMode.AntiAlias;
-                        g.SetClip(path);
-                        g.DrawImageUnscaled(opaque, 0, 0);
-                        g.ResetClip();
-                        using (var p = new Pen(Color.FromArgb(90, 200, 220), 1.5f * dpiScale)) g.DrawPath(p, path);
-                    }
-                    var wa = Screen.PrimaryScreen.WorkingArea;
-                    int hx = (int)MouthX(80);
-                    int bxp = Math.Max(wa.Left, Math.Min(wa.Right - w, hx - w / 2));
-                    int byp = (int)(y + 8 * S) - (h + tail);
-                    bubbleWin.Push(outBmp, bxp, byp);
-                }
-            }
-        }
-
-        static GraphicsPath Bubble(float x, float y, float w, float h, float r, float tail)
-        {
-            var p = new GraphicsPath();
-            p.AddArc(x, y, r * 2, r * 2, 180, 90); p.AddArc(x + w - r * 2, y, r * 2, r * 2, 270, 90);
-            p.AddArc(x + w - r * 2, y + h - r * 2, r * 2, r * 2, 0, 90);
-            p.AddLine(x + w / 2 + tail, y + h, x + w / 2, y + h + tail);
-            p.AddLine(x + w / 2, y + h + tail, x + w / 2 - tail, y + h);
-            p.AddArc(x, y + h - r * 2, r * 2, r * 2, 90, 90);
-            p.CloseFigure(); return p;
-        }
+        void Say(string text, int ms) { Say(text, ms, false); }
 
         void ClockChecks()
         {
@@ -659,6 +639,8 @@ namespace LuckyPet
         void OnDown(object s, MouseEventArgs e)
         {
             if (e.Button != MouseButtons.Left) return;
+            if (cfg != null && cfg.F7 && (!interactActive || cfg.LockPet)) return;
+            lastTouch = Environment.TickCount;
             dragging = true; moved = false; downPt = Cursor.Position;
             dragOff = new Point(Cursor.Position.X - (int)x, Cursor.Position.Y - (int)y);
         }
@@ -666,7 +648,8 @@ namespace LuckyPet
         {
             if (!dragging) return;
             var c = Cursor.Position;
-            if (!moved && (Math.Abs(c.X - downPt.X) > 4 || Math.Abs(c.Y - downPt.Y) > 4))
+            int th = cfg != null && cfg.F7 ? 10 : 4;
+            if (!moved && (Math.Abs(c.X - downPt.X) > th || Math.Abs(c.Y - downPt.Y) > th))
             {
                 moved = true;
                 if (ballCarried) DropCarriedBall(false);
@@ -719,9 +702,10 @@ namespace LuckyPet
                 fsCheck = 0;
                 bool fs = IsFullscreenApp();
                 if (fs && !hiddenFs) { hiddenFs = true; Hide(); ballWin.Hide(); boneWin.Hide(); bubbleWin.Hide(); }
-                else if (!fs && hiddenFs) { hiddenFs = false; Show(); if (ballActive && !ballCarried) ballWin.Show(); if (boneActive) boneWin.Show(); }
+                else if (!fs && hiddenFs) { hiddenFs = false; if (!userHidden) { Show(); if (ballActive && !ballCarried) ballWin.Show(); if (boneActive) boneWin.Show(); } }
             }
-            if (hiddenFs) return;
+            FeaturesTick();
+            if (hiddenFs || userHidden) return;
 
             if (st == St.Focus && now >= focusEnd)
             {
@@ -734,7 +718,7 @@ namespace LuckyPet
             }
             if (st == St.Focus && frame % 250 == 0) UpdateTooltip();
 
-            if (remindOn && now >= nextRemind && st != St.Drag && st != St.Focus)
+            if (remindOn && !cfg.F1 && now >= nextRemind && st != St.Drag && st != St.Focus)
             {
                 nextRemind = now.AddMinutes(RemindMinutes);
                 mem.Reminders++; dirty = true;
@@ -746,8 +730,18 @@ namespace LuckyPet
             if (now >= nextChat)
             {
                 nextChat = now.AddMinutes(rnd.Next(20, 36));
-                if (st != St.Focus && st != St.Sleep) Say(Cheers[rnd.Next(Cheers.Length)], 6000);
+                if (st != St.Focus && st != St.Sleep && !Quiet()) Say(Cheers[rnd.Next(Cheers.Length)], 6000);
             }
+
+            if (ModeTick())
+            {
+                var wa0 = Screen.PrimaryScreen.WorkingArea;
+                x = Math.Max(wa0.Left, Math.Min(wa0.Right - PW, x));
+                StepBall(); StepBone(); StepBubble();
+                Render();
+                return;
+            }
+            if (cfg.LockPet && (st == St.Walk || st == St.Chase)) SetState(St.Sit, 120);
 
             var wa = Screen.PrimaryScreen.WorkingArea;
             double g = Ground();
@@ -844,9 +838,15 @@ namespace LuckyPet
         void Render()
         {
             int fps; string anim = Anim(out fps);
+            int idx;
+            anim = PresentAnim(anim, ref fps, out idx);
             var frames = (dir > 0 ? sprR : sprL)[anim];
-            int idx = (int)(((long)(Environment.TickCount - animStart) * fps / 1000) % frames.Length);
-            if (idx < 0) idx = 0;
+            if (idx < 0)
+            {
+                idx = (int)((long)(Environment.TickCount - animStart) * fps / 1000);
+                idx = curOnce ? Math.Min(idx, frames.Length - 1) : idx % frames.Length;
+            }
+            if (idx < 0 || idx >= frames.Length) idx = 0;
             using (var g = Graphics.FromImage(canvas))
             {
                 g.Clear(Color.Transparent);
@@ -864,11 +864,12 @@ namespace LuckyPet
                             g.FillPath(b, p);
                     }
                 }
-                g.DrawImageUnscaled(frames[idx], 0, 0);
+                DrawPetFrame(g, anim, frames[idx]);
                 g.ScaleTransform(S, S);
                 DrawAccessories(g, anim, idx);
                 if (st == St.Carry) DrawBall(g, dir > 0 ? 117 : CW - 117, 71, 5.5f, 0);
                 DrawOverlay(g);
+                FeatureOverlay(g);
             }
             Push(canvas, (int)x, (int)y);
         }
@@ -980,7 +981,7 @@ namespace LuckyPet
                     }
                 }
             }
-            if (st == St.Sleep || st == St.Focus)
+            if (st == St.Sleep || st == St.Focus || shownAnim == "sleep")
             {
                 float hx = HeadX(86);
                 using (var f = new Font("Segoe UI", 8.5f, FontStyle.Bold))
@@ -1100,7 +1101,7 @@ namespace LuckyPet
             }
         }
 
-        protected override void OnFormClosed(FormClosedEventArgs e) { SaveMem(); tray.Visible = false; base.OnFormClosed(e); }
+        protected override void OnFormClosed(FormClosedEventArgs e) { SaveMem(); FeaturesShutdown(); tray.Visible = false; base.OnFormClosed(e); }
     }
 
     // ================================================================ accessories (idle-game cartoon style: bold outlines, flat 2-tone)

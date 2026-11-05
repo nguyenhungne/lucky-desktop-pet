@@ -235,7 +235,7 @@ def collar(cv, cx, cy, rx, ry):
         cv.flat(sd_ellipse(tx + ox, ty + oy, rr, rr * 0.9), C(150, 162, 190), soft=1.2, alpha_mul=0.7)
 
 
-def eye(cv, ex, ey, e, mode):
+def eye(cv, ex, ey, e, mode, look=(0.0, 0.0)):
     if mode in ('happy', 'closed', 'blink'):
         if mode == 'happy':
             pts = arc_pts(ex, ey + e * 0.35, e * 0.95, e * 0.95, 200, 340)
@@ -257,17 +257,26 @@ def eye(cv, ex, ey, e, mode):
     col = col * (0.72 + 0.28 * np.clip(-d * R / 3.5, 0, 1))[..., None]
     a = np.clip(0.5 - d * R, 0, 1)
     cv.over(col, a)
-    pr = e * (0.62 if mode == 'wide' else 0.5)
-    cv.flat(sd_ellipse(ex + e * 0.06, ey + e * 0.1, pr, pr * 1.08), C(12, 16, 30))
-    cv.flat(sd_polyline(arc_pts(ex, ey + e * 0.05, e * 0.72, e * 0.8, 35, 145), 0.35), C(160, 255, 245), soft=1.3, alpha_mul=0.65)
-    cv.flat(sd_ellipse(ex - e * 0.38, ey - e * 0.44, e * 0.36, e * 0.34), WHITE)
-    cv.flat(sd_ellipse(ex + e * 0.36, ey + e * 0.36, e * 0.15, e * 0.15), WHITE, alpha_mul=0.9)
+    ox, oy = look[0] * e * 0.3, look[1] * e * 0.24
+    pr = e * (0.62 if mode in ('wide', 'sparkle') else 0.5)
+    cv.flat(np.maximum(sd_ellipse(ex + e * 0.06 + ox, ey + e * 0.1 + oy, pr, pr * 1.08), d), C(12, 16, 30))
+    cv.flat(np.maximum(sd_polyline(arc_pts(ex + ox * 0.5, ey + e * 0.05 + oy * 0.5, e * 0.72, e * 0.8, 35, 145), 0.35), d), C(160, 255, 245), soft=1.3, alpha_mul=0.65)
+    cv.flat(sd_ellipse(ex - e * 0.38 + ox * 0.6, ey - e * 0.44 + oy * 0.6, e * 0.36, e * 0.34), WHITE)
+    cv.flat(sd_ellipse(ex + e * 0.36 + ox * 0.6, ey + e * 0.36 + oy * 0.6, e * 0.15, e * 0.15), WHITE, alpha_mul=0.9)
+    if mode == 'sparkle':
+        sx_, sy_ = ex + e * 0.25 + ox, ey - e * 0.05 + oy
+        cv.flat(np.minimum(sd_capsule(sx_ - e * 0.45, sy_, sx_ + e * 0.45, sy_, 0.28, 0.28), sd_capsule(sx_, sy_ - e * 0.45, sx_, sy_ + e * 0.45, 0.28, 0.28)), WHITE)
+    if mode == 'half':
+        cover = np.maximum(sd_ellipse(ex, ey, rx * 1.15, ry * 1.15), Y - (ey - ry * 0.05))
+        cv.flat(cover, C(244, 247, 253))
+        cv.flat(sd_polyline([(ex - e * 1.08, ey - ry * 0.02), (ex + e * 1.12, ey - ry * 0.1)], 0.62), LINE, soft=1.0)
+        return
     lid = arc_pts(ex, ey + e * 0.05, e * 1.08, e * 1.2, 196, 344)
     lid.append((ex + e * 1.32, ey - e * 0.62))
     cv.flat(sd_polyline(lid, 0.62), LINE, soft=1.0)
 
 
-def head(cv, cx, cy, r, eyes='open', mouth='neutral', ears_back=0.0, tilt=0.0):
+def head(cv, cx, cy, r, eyes='open', mouth='neutral', ears_back=0.0, tilt=0.0, look=(0.0, 0.0), brows=None, glasses=False, headset=False):
     eb = ears_back
     # ears
     for far, (p0, p1, p2) in ((True, ((cx - r * 0.92, cy - r * 0.2), (cx - r * 0.66 - eb * 4, cy - r * 1.46 + eb * 6), (cx - r * 0.06, cy - r * 0.8))),
@@ -306,20 +315,50 @@ def head(cv, cx, cy, r, eyes='open', mouth='neutral', ears_back=0.0, tilt=0.0):
     # nose
     cv.part(sd_ellipse(cx + r * 1.15, cy + r * 0.22, r * 0.17, r * 0.125), NOSE, r * 0.12, gloss=0.8, shin=45, ao=0.15, rim=0.1)
     # mouth
+    nose_line = sd_polyline([(cx + r * 1.13, cy + r * 0.33), (cx + r * 1.09, cy + r * 0.43)], 0.45)
     if mouth == 'neutral':
         cv.flat(sd_polyline([(cx + r * 1.13, cy + r * 0.33), (cx + r * 1.09, cy + r * 0.45)], 0.45), LINE, soft=1.1)
         cv.flat(sd_polyline(arc_pts(cx + r * 1.0, cy + r * 0.43, r * 0.09, r * 0.08, 0, 180, 8), 0.45), LINE, soft=1.1)
         cv.flat(sd_polyline(arc_pts(cx + r * 1.18, cy + r * 0.43, r * 0.09, r * 0.08, 0, 180, 8), 0.45), LINE, soft=1.1)
+    elif mouth == 'worry':
+        cv.flat(nose_line, LINE, soft=1.1)
+        cv.flat(sd_polyline([(cx + r * 0.9, cy + r * 0.52), (cx + r * 0.98, cy + r * 0.47), (cx + r * 1.06, cy + r * 0.52),
+                             (cx + r * 1.14, cy + r * 0.47), (cx + r * 1.22, cy + r * 0.52)], 0.42), LINE, soft=1.1)
+    elif mouth == 'o':
+        cv.flat(nose_line, LINE, soft=1.1)
+        cv.part(sd_ellipse(cx + r * 1.05, cy + r * 0.55, r * 0.09, r * 0.11), MOUTH, 1.2, ao=0.1, rim=0)
+    elif mouth == 'yawn':
+        cv.flat(nose_line, LINE, soft=1.1)
+        cv.part(sd_ellipse(cx + r * 1.0, cy + r * 0.62, r * 0.22, r * 0.3), MOUTH, 1.8, ao=0.12, rim=0)
+        cv.part(sd_ellipse(cx + r * 1.0, cy + r * 0.8, r * 0.14, r * 0.08), TONGUE, 1.0, gloss=0.3, ao=0)
     else:
-        open_ = 1.0 if mouth == 'open' else (0.55 if mouth == 'chew1' else 0.2)
-        cv.flat(sd_polyline([(cx + r * 1.13, cy + r * 0.33), (cx + r * 1.09, cy + r * 0.43)], 0.45), LINE, soft=1.1)
+        open_ = {'open': 1.0, 'pant': 1.0, 'chew1': 0.55, 'talk': 0.6}.get(mouth, 0.2)
+        cv.flat(nose_line, LINE, soft=1.1)
         cv.part(sd_ellipse(cx + r * 1.02, cy + r * 0.52, r * 0.2, r * 0.15 * open_ + 0.6), MOUTH, 1.5, ao=0.1, rim=0)
-        if mouth == 'open':
+        if mouth in ('open', 'pant'):
             cv.part(sd_ellipse(cx + r * 1.03, cy + r * 0.68, r * 0.135, r * 0.2), TONGUE, r * 0.12, gloss=0.35, shin=25, ao=0.12)
             cv.flat(sd_capsule(cx + r * 1.03, cy + r * 0.6, cx + r * 1.03, cy + r * 0.78, 0.3, 0.2), C(200, 80, 110), alpha_mul=0.7)
     # eyes
-    eye(cv, cx - r * 0.38, cy - r * 0.06, r * 0.21, eyes)
-    eye(cv, cx + r * 0.36, cy - r * 0.08, r * 0.195, eyes)
+    eyes_xy = ((cx - r * 0.38, cy - r * 0.06, r * 0.21, 1), (cx + r * 0.36, cy - r * 0.08, r * 0.195, -1))
+    for ex, ey, e, _ in eyes_xy:
+        eye(cv, ex, ey, e, eyes, look)
+    if brows == 'worried':
+        for ex, ey, e, inner in eyes_xy:
+            cv.flat(sd_capsule(ex - inner * e * 0.9, ey - e * 1.5, ex + inner * e * 0.9, ey - e * 1.95, 0.55, 0.45), C(40, 50, 92), soft=1.0)
+    if glasses:
+        for ex, ey, e, _ in eyes_xy:
+            cv.flat(sd_ellipse(ex, ey, e * 1.6, e * 1.5), C(190, 225, 255), soft=1.0, alpha_mul=0.25)
+            cv.part(np.abs(sd_ellipse(ex, ey, e * 1.6, e * 1.5)) - 0.6, C(40, 48, 86), 0.8, gloss=0.4, ao=0.08, rim=0)
+        (lx, ly, le, _), (rx_, ry_, re_, _) = eyes_xy
+        cv.flat(sd_capsule(lx + le * 1.6, ly - 0.6, rx_ - re_ * 1.6, ry_ - 0.6, 0.5, 0.5), C(40, 48, 86))
+        cv.flat(sd_capsule(lx - le * 1.6, ly - 0.8, cx - r * 0.98, cy - r * 0.22, 0.5, 0.5), C(40, 48, 86))
+    if headset:
+        hs = C(62, 72, 116)
+        cv.part(sd_polyline(arc_pts(cx - r * 0.15, cy - r * 0.25, r * 0.8, r * 0.9, 200, 330, 16), 1.25), hs, 1.2, gloss=0.3, ao=0.1)
+        cv.part(sd_ellipse(cx - r * 0.8, cy + r * 0.02, r * 0.25, r * 0.31), hs, r * 0.2, gloss=0.4, ao=0.15)
+        cv.part(sd_ellipse(cx - r * 0.8, cy + r * 0.02, r * 0.13, r * 0.18), AQUA, r * 0.1, gloss=0.4, ao=0)
+        cv.part(sd_polyline([(cx - r * 0.72, cy + r * 0.26), (cx - r * 0.2, cy + r * 0.78), (cx + r * 0.55, cy + r * 0.74)], 0.6), hs, 0.6, ao=0)
+        cv.part(sd_ellipse(cx + r * 0.62, cy + r * 0.74, 1.7, 1.5), hs, 1.2, gloss=0.4, ao=0)
 
 
 def body(cv, cx, cy, bob=0.0, breath=0.0):
@@ -340,7 +379,7 @@ def ruff(cv, cx, cy, rx, ry, seed=61):
 
 
 # ---------------------------------------------------------------- poses
-def pose_stand(phase=0.0, run=False, eyes='open', mouth='neutral', wag=0.0, bob_amp=1.4, eat=False, chew='chew1'):
+def pose_stand(phase=0.0, run=False, eyes='open', mouth='neutral', wag=0.0, bob_amp=1.4, eat=False, chew='chew1', extra=(), look=(0.0, 0.0)):
     cv = Canvas()
     s = math.sin(phase * 2 * math.pi)
     amp = 6.5 if run else 4.0
@@ -358,7 +397,9 @@ def pose_stand(phase=0.0, run=False, eyes='open', mouth='neutral', wag=0.0, bob_
     else:
         ruff(cv, 85, 84 - bob, 11, 13)
         collar(cv, 87, 79 - bob, 11, 4.4)
-        head(cv, 92, 56 - bob, 23, eyes=eyes, mouth=mouth, ears_back=0.5 if run else 0.0)
+        head(cv, 92, 56 - bob, 23, eyes=eyes, mouth=mouth, ears_back=0.5 if run else 0.0, look=look)
+    for f in extra:
+        f(cv, bob)
     return cv
 
 
@@ -380,19 +421,26 @@ def pose_sit(wag=0.0, eyes='open', mouth='neutral', breath=0.0):
     return cv
 
 
-def pose_sleep(breath=0.0):
+def pose_lie(eyes='closed', mouth='neutral', breath=0.0, wag=0.0, ears_back=0.35, flat=0.0, extra=(), brows=None):
     cv = Canvas()
-    d = sd_ellipse(58, 104 - breath * 0.5, 33, 12.5 + breath) + (fur_noise(58, 104, 81, 1.5) - 0.5) * 0.9
-    saddle = np.clip((100 - Y) / 8 + 0.3, 0, 1)
+    fy = flat * 3
+    d = sd_ellipse(58, 104 - breath * 0.5 + fy, 33, 12.5 - flat * 2.5 + breath) + (fur_noise(58, 104, 81, 1.5) - 0.5) * 0.9
+    saddle = np.clip((100 + fy - Y) / 8 + 0.3, 0, 1)
     belly = soft_mask(sd_ellipse(62, 113, 26, 5) + (fur_noise(58, 104, 82, 2) - 0.5) * 2, 1.0)
     base = mix(mix(np.broadcast_to(FUR_M, (H, W, 3)), FUR_D, saddle * 0.8), WHITE, belly)
     cv.part(d, base, 11, grain=fur_noise(58, 104, 83, 2.2), ao=0.25)
     cv.part(sd_ellipse(98, 112.5, 9, 4), WHITE, 3.5, ao=0.2)
     cv.part(sd_ellipse(105, 113.5, 7.5, 3.4), WHITE, 3.0, ao=0.2)
-    tail(cv, [(30, 103), (10, 110), (56, 113), (95, 108)], 12)
-    collar(cv, 80, 92, 9, 3.6)
-    head(cv, 84, 95, 20, eyes='closed', ears_back=0.35)
+    tail(cv, [(30, 103 + fy * 0.6), (10, 110), (56, 113), (95, 108 - wag)], 12)
+    collar(cv, 80, 92 + fy, 9, 3.6)
+    head(cv, 84, 95 + fy, 20, eyes=eyes, mouth=mouth, ears_back=ears_back, brows=brows)
+    for f in extra:
+        f(cv)
     return cv
+
+
+def pose_sleep(breath=0.0):
+    return pose_lie(breath=breath)
 
 
 # ---------------------------------------------------------------- output
