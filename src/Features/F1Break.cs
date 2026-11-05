@@ -55,7 +55,7 @@ namespace LuckyPet
             stats.Today.Done++;
             ClearMode("break");
             Request("break_done", P_BREAK, "break_done", true);
-            Reward(3, 1);
+            
         }
 
         void BreakSnooze(string kind)

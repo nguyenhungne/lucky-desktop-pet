@@ -113,7 +113,7 @@ def vnoise(x, y, seed=0.0):
     return (a + (b - a) * u) + ((c + (d - c) * u) - (a + (b - a) * u)) * v
 
 
-FLUFF = 0.4   # idle/cartoon style: clean shapes, only a hint of fluff
+FLUFF = 0.25  # idle/cartoon style: clean shapes, only a hint of fluff
 
 
 def fur_noise(cx, cy, seed, freq=1.3):
@@ -165,6 +165,10 @@ class Canvas:
         shade = C(0.76, 0.81, 0.95)
         shade = shade + (1.0 - shade) * soft
         col = b * (shade + (1.0 - shade) * lit[..., None]) * 1.02
+        # soft rim light on the edge that faces the key light (idle-game polish)
+        if rim > 0:
+            band = np.clip(1 - t * 2.6, 0, 1) * np.clip(-(nx * 0.55 + ny * 0.85), 0, 1)
+            col = col + (255 - col) * (band * rim * 0.55)[..., None]
         # crisp white specular dot on glossy parts
         if gloss >= 0.3:
             col = col + (255 - col) * (np.clip((spec / gloss - 0.55) / 0.08, 0, 1) * 0.95)[..., None]

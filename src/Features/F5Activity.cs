@@ -17,7 +17,7 @@ namespace LuckyPet
         static LLProc kbProc, msProc;          // kept alive for the lifetime of the hooks
         IntPtr kbHook, msHook;
         readonly Queue<int> keyTimes = new Queue<int>(), clickTimes = new Queue<int>();
-        int lastWheel = -100000, typingFastSince = -1, lastStartle = -100000, lastSaved = -100000, f5Last, lastFastBurst = -100000, comboKeys;
+        int lastWheel = -100000, typingFastSince = -1, lastStartle = -100000, lastSaved = -100000, f5Last, lastFastBurst = -100000;
         bool ctrlS, idleSleeping, yawned;
 
         static uint IdleMs()
@@ -50,7 +50,6 @@ namespace LuckyPet
                 if (msg == 0x100 || msg == 0x104)
                 {
                     keyTimes.Enqueue(Environment.TickCount);
-                    comboKeys++;
                     int vk = Marshal.ReadInt32(l);
                     if (vk == 0x53 && (GetAsyncKeyState(0x11) & 0x8000) != 0) ctrlS = true;   // Ctrl+S (only the fact it happened)
                 }
@@ -80,8 +79,6 @@ namespace LuckyPet
 
             if (clickTimes.Count >= 8 && now - lastStartle > 10000) { lastStartle = now; clickTimes.Clear(); Request("react", P_REACT, "activity_startle", true); }
             if (ctrlS) { ctrlS = false; if (now - lastSaved > 30000) { lastSaved = now; Request("react", P_REACT, "activity_saved", true); Say("Đã lưu ✓", 1500, false); } }
-            // idle-game style typing feedback: +1 XP every 100 keystrokes
-            if (comboKeys >= 100) { comboKeys -= 100; Reward(1, 0); floaters.Add(new Floater { Text = "⌨ x100", X = HeadX(70) - 10, Y = 52, T0 = now + 300, C = System.Drawing.Color.FromArgb(255, 226, 120) }); }
             // cursor comes close -> turn the head and look at it (any calm pose)
             var cp = System.Windows.Forms.Cursor.Position;
             double hx = x + (dir > 0 ? 66 : CW - 66) * S, hy = y + 47 * S;
@@ -92,12 +89,13 @@ namespace LuckyPet
             uint idle = IdleMs();
             if (idle >= 10 * 60000)
             {
-                if (!idleSleeping) { idleSleeping = true; SetLoop("activity", P_ACTIVITY, "sleep"); }
+                if (!idleSleeping) { idleSleeping = true; ClearMode("activity"); if (st != St.Focus) SetState(St.Sleep, 1000000); }
                 return;
             }
             if (idleSleeping)
             {
                 idleSleeping = false; ClearMode("activity");
+                if (st == St.Sleep) SetState(St.Sit, 60);
                 Request("react", P_REACT, "activity_wake", true);
                 Say("Bạn về rồi! Chào nha", 3000, false);
             }
@@ -119,9 +117,7 @@ namespace LuckyPet
                 Request("react", P_REACT, "activity_typing_fast", false, double.NaN, null, 2500);   // short cheer, even over the work context
                 Say(new[] { "Gõ nhanh quá! ✦", "Đỉnh thật sự!", "Tay bạn bốc lửa luôn!" }[rnd.Next(3)], 2500, false);
             }
-            if (fast) SetLoop("activity", P_ACTIVITY, "activity_typing_fast");
-            else if (keyTimes.Count >= 10) SetLoop("activity", P_ACTIVITY, "activity_working");
-            else ClearMode("activity");
+            ClearMode("activity");
         }
     }
 }

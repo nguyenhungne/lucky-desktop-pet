@@ -76,7 +76,7 @@ namespace LuckyPet
             if (pomo_ == PomoState.Focus)
             {
                 stats.Today.Pomo++; pomoCycle++;
-                Reward(40, 15);
+                
                 ClearMode("focus");
                 Request("focus_done", P_FOCUS_EVT, "focus_done", true);
                 if (cfg.Sound) try { SystemSounds.Asterisk.Play(); } catch { }

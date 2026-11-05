@@ -488,11 +488,6 @@ def _(i):
                     fx=[lambda cv, i=i: sparkle(cv, 26 + (i % 4) * 4, 36, 2.6), lambda cv, i=i: sparkle(cv, 104, 30 + (i % 3) * 3, 2.2)])
 
 
-@anim('activity_working', 6, 5, True)
-def _(i):
-    return pose_act(wag=math.sin(P(i, 6) * TAU) * 3, breath=math.sin(P(i, 6) * TAU) * 0.6)
-
-
 @anim('activity_look', 8, 1, True)
 def _(i):
     return pose_act(head_kw=dict(look=LOOK8[i]), hdx=LOOK8[i][0] * 0.8, hdy=LOOK8[i][1] * 0.6)
@@ -595,40 +590,6 @@ def _(i):
     return pose_act(head_kw=dict(eyes='happy', mouth='open'), arms=((68, 84), (76, 83)) if together else ((58, 86), (88, 84)),
                     wag=math.sin(P(i, 4) * TAU) * 7,
                     fx=[lambda cv, i=i: sparkle(cv, 72, 76, 3.2), lambda cv: sparkle(cv, 90, 70, 2)] if together else [])
-
-
-@anim('context_suggest_focus', 6, 6, False)
-def _(i):
-    paw = [(80, 82), (84, 66), (85, 56), (86, 55), (85, 56), (86, 55)][i]
-    return pose_act(head_kw=dict(mouth='talk' if i in (2, 4) else 'neutral'), arms=((60, 96), paw), hdx=-1.5 if i >= 2 else 0, hdy=1.0 if i >= 2 else 0,
-                    fx=[lambda cv: sparkle(cv, 92, 48, 2.2)] if i >= 3 else [])
-
-
-@anim('context_download', 10, 10, False)
-def _(i):
-    return pose_stand(phase=i / 10, wag=math.sin(P(i, 10) * TAU) * 5, eyes='happy', mouth='neutral',
-                      extra=[lambda cv, bob: gift(cv, 117, 79 - bob, 0.95)])
-
-
-@anim('context_copy', 4, 6, False)
-def _(i):
-    return pose_act(head_kw=dict(eyes='happy'), arms=((62, 94), (80, 92)), hdy=[0, 0.8, 0.8, 0][i],
-                    back=[lambda cv, i=i: paper(cv, 71, 92, -0.12 + i * 0.03)])
-
-
-@anim('context_build_fail', 8, 7, False)
-def _(i):
-    shake = [0, -1.5, 1.5, -1.5, 1.5, -1, 0, 0][i]
-    return pose_act(head_kw=dict(eyes='closed' if i % 3 == 0 else 'open', mouth='worry', brows='worried'), arms=((50 + shake, 30), (82 + shake, 27)),
-                    hdx=shake, arms_behind=True, fx=[lambda cv, i=i: sweat(cv, 90, 28 + i * 1.2, 1.0)])
-
-
-@anim('context_build_pass', 8, 10, False)
-def _(i):
-    together = i % 2 == 1
-    dy = [0, -4, -6, -4, 0, -3, -4, 0][i]
-    return pose_act(head_kw=dict(eyes='happy', mouth='open'), arms=((68, 82), (76, 81)) if together else ((56, 80), (88, 78)), dy=dy,
-                    wag=math.sin(P(i, 4) * TAU) * 7, fx=[lambda cv, i=i: confetti(cv, i / 16, seed=9, n=14), lambda cv: check(cv, 98, 22, 1.3)])
 
 
 @anim('context_day_summary', 6, 4, True)

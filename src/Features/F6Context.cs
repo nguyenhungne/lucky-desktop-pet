@@ -1,5 +1,4 @@
-// F6 – reacts to what the user is working on: active app group, focus streaks, app hopping,
-// finished downloads, clipboard copies, terminal build results and an end-of-day summary.
+// F6 – reacts to what the user is working on: active app group, long focus streaks and an end-of-day summary.
 // Reads only the foreground process name + window title (every 2 s); never screenshots or clipboard contents.
 using System;
 using System.Collections.Generic;
@@ -15,48 +14,21 @@ namespace LuckyPet
     {
         [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder sb, int n);
-        [DllImport("user32.dll")] static extern bool AddClipboardFormatListener(IntPtr h);
-        [DllImport("user32.dll")] static extern bool RemoveClipboardFormatListener(IntPtr h);
-        [DllImport("shell32.dll")] static extern int SHGetKnownFolderPath([MarshalAs(UnmanagedType.LPStruct)] Guid id, uint flags, IntPtr token, out IntPtr path);
 
         static readonly Dictionary<string, string> GroupNames = new Dictionary<string, string> {
             { "code", "lập trình" }, { "docs", "tài liệu" }, { "sheet", "bảng tính" }, { "email", "email" },
             { "meeting", "họp" }, { "design", "thiết kế" }, { "fun", "giải trí" } };
 
-        int f6Last, ctxChangedAt = -100000, appSince, lastSuggest = -3600000, lastClip = -100000, lastDownload = -100000;
-        string ctxGroup, ctxProc, lastTermTitle;
+        int f6Last, ctxChangedAt = -100000, appSince;
+        string ctxGroup, ctxProc;
         bool praised;
-        readonly List<int> switchTimes = new List<int>();
         readonly Dictionary<uint, string> pidNames = new Dictionary<uint, string>();
-        FileSystemWatcher dlWatch;
 
         bool InMeeting() { return cfg != null && cfg.F6 && ctxGroup == "meeting"; }
 
-        void F6InitHandle()
-        {
-            try { AddClipboardFormatListener(Handle); } catch { }
-            try
-            {
-                IntPtr p;
-                if (SHGetKnownFolderPath(new Guid("374DE290-123F-4565-9164-39C4925E467B"), 0, IntPtr.Zero, out p) == 0)
-                {
-                    string dir = Marshal.PtrToStringUni(p); Marshal.FreeCoTaskMem(p);
-                    if (Directory.Exists(dir))
-                    {
-                        dlWatch = new FileSystemWatcher(dir) { IncludeSubdirectories = false, NotifyFilter = NotifyFilters.FileName };
-                        dlWatch.Created += OnDownload; dlWatch.Renamed += OnDownload;
-                        dlWatch.EnableRaisingEvents = true;
-                    }
-                }
-            }
-            catch { }
-        }
-
-        void F6Shutdown()
-        {
-            try { RemoveClipboardFormatListener(Handle); } catch { }
-            if (dlWatch != null) dlWatch.Dispose();
-        }
+        void F6InitHandle() { }
+        void F6Shutdown() { }
+        void OnClipboardChanged() { }
 
         string ProcName(uint pid)
         {
@@ -97,7 +69,7 @@ namespace LuckyPet
             PomoDistractionCheck(proc, title);
             if (!cfg.F6) { ClearMode("context"); ctxGroup = null; return; }
 
-            if (proc != ctxProc) { ctxProc = proc; appSince = now; praised = false; switchTimes.Add(now); }
+            if (proc != ctxProc) { ctxProc = proc; appSince = now; praised = false; }
             string group = Classify(proc, title);
             if (group != null && dtSec > 0)
             {
@@ -109,7 +81,11 @@ namespace LuckyPet
             {
                 ctxGroup = group; ctxChangedAt = now;
             }
-            if (ctxGroup == null || (ctxGroup == "fun" && pomo_ != PomoState.Off)) ClearMode("context");
+            // the outfit is a short "I'm working with you" moment, not a permanent pose:
+            // 25 s after switching app group, then 25 s every 4 min (meetings stay in the corner the whole time)
+            int since = now - ctxChangedAt;
+            bool showCtx = ctxGroup == "meeting" || (cfg.WorkOutfit && (since < 25000 || since % 240000 < 25000));
+            if (ctxGroup == null || !showCtx || (ctxGroup == "fun" && pomo_ != PomoState.Off)) ClearMode("context");
             else SetLoop("context", P_CONTEXT, "context_" + ctxGroup, ctxGroup == "meeting" ? Corner() : double.NaN);
 
             // long focus on one app
@@ -119,22 +95,6 @@ namespace LuckyPet
                 Request("ctx_evt", P_CTX_EVT, "context_praise", true);
                 Say("Tập trung giỏi quá!", 4000, false);
             }
-            // app hopping
-            switchTimes.RemoveAll(t => now - t > 5 * 60000);
-            if (switchTimes.Count > 15 && now - lastSuggest > 3600000)
-            {
-                lastSuggest = now; switchTimes.Clear();
-                Request("ctx_evt", P_CTX_EVT, "context_suggest_focus", true);
-                Say("Thử làm một việc thôi nhé?", 5000, false);
-            }
-            // terminal / IDE build result from the window title
-            if (cfg.BuildWatch && group == "code" && title != lastTermTitle)
-            {
-                lastTermTitle = title;
-                string t = title.ToLowerInvariant();
-                if (t.Contains("error") || t.Contains("failed")) Request("ctx_evt", P_CTX_EVT, "context_build_fail", true);
-                else if (t.Contains("passed") || t.Contains("success")) Request("ctx_evt", P_CTX_EVT, "context_build_pass", true);
-            }
             // end-of-day summary
             DateTime at;
             string today = DateTime.Now.ToString("yyyy-MM-dd");
@@ -143,34 +103,6 @@ namespace LuckyPet
                 stats.LastSummary = today;
                 ShowDaySummary(false);
             }
-        }
-
-        void OnDownload(object s, FileSystemEventArgs e)
-        {
-            string ext = Path.GetExtension(e.FullPath).ToLowerInvariant();
-            if (ext == ".crdownload" || ext == ".part" || ext == ".tmp" || ext == ".opdownload" || ext == ".download" || ext == "") return;
-            string path = e.FullPath;
-            try { BeginInvoke(new Action(() => DownloadArrived(path))); } catch { }
-        }
-
-        void DownloadArrived(string path)
-        {
-            int now = Environment.TickCount;
-            if (!cfg.F6 || cfg.Dnd || now - lastDownload < 3000) return;
-            lastDownload = now;
-            Request("ctx_evt", P_CTX_EVT, "context_download", true);
-            string name = Path.GetFileName(path);
-            if (name.Length > 34) name = name.Substring(0, 31) + "…";
-            Ask("Tải xong: " + name, 8000,
-                Btn("Mở thư mục", () => { try { Process.Start("explorer.exe", "/select,\"" + path + "\""); } catch { } }));
-        }
-
-        void OnClipboardChanged()
-        {
-            int now = Environment.TickCount;
-            if (cfg == null || !cfg.F6 || cfg.Dnd || now - lastClip < 5000) return;
-            lastClip = now;   // the clipboard itself is never opened or read
-            Request("ctx_evt", P_CTX_EVT, "context_copy", true);
         }
 
         void ShowDaySummary(bool manual)

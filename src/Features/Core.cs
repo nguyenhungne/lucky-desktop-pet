@@ -19,7 +19,7 @@ namespace LuckyPet
     class Settings
     {
         public bool F1 = true, F3 = true, F4 = true, F5 = true, F6 = true, F7 = true;
-        public bool Dnd, Sound = true, Interact, LockPet, Dodge = true, BuildWatch = true;
+        public bool Dnd, Sound = true, Interact, LockPet, Dodge = true, SelfPlay = true, WorkOutfit;
         public int EyeMin = 20, WaterMin = 60, StretchMin = 50;
         public int FocusMin = 25, ShortBreakMin = 5, LongBreakMin = 15, LongEvery = 4;
         public string Distractions = "youtube,facebook,tiktok,netflix,instagram,reddit";
@@ -268,7 +268,7 @@ namespace LuckyPet
                     while ((line = r.ReadLine()) != null)
                     {
                         var p = line.Split(',');
-                        if (p.Length == 4) animInfo[p[0]] = new[] { int.Parse(p[2]), int.Parse(p[3]) };
+                        if (p.Length == 4) animInfo[p[0]] = new[] { int.Parse(p[2]), int.Parse(p[3]), int.Parse(p[1]) };
                     }
                 }
             }
@@ -310,7 +310,7 @@ namespace LuckyPet
         int OnceMs(ModeReq m)
         {
             if (m.Ms > 0) return m.Ms;
-            int n = sprR[m.Anim].Length;
+            int[] inf; int n = animInfo.TryGetValue(m.Anim, out inf) ? inf[2] : sprR[m.Anim].Length;
             return (int)(n * 1000L / Fps(m.Anim)) + 100;
         }
 
@@ -327,6 +327,8 @@ namespace LuckyPet
                 if (expired) { modes.Remove(k); if (m.OnDone != null) m.OnDone(); }
             }
             var top = TopMode();
+            // while Lucky sleeps only alerts / breaks / focus may take over (no laptop, no looking around)
+            if (top != null && st == St.Sleep && top.Prio > P_FOCUS) top = null;
             if (top == null) { curMode = null; lastTopKey = null; movingToTarget = false; return false; }
             if (lastTopKey != top.Key + top.Anim) { lastTopKey = top.Key + top.Anim; animStart = now; }
             curMode = top;
@@ -380,7 +382,7 @@ namespace LuckyPet
             }
             if (transAnim != null)
             {
-                int n = sprR[transAnim].Length, f = Fps(transAnim);
+                int[] inf; int n = animInfo.TryGetValue(transAnim, out inf) ? inf[2] : sprR[transAnim].Length, f = Fps(transAnim);
                 int i = (int)((long)(now - transStart) * f / 1000);
                 if (i < n) { idx = i; fps = f; shownAnim = anim; return transAnim; }
                 transAnim = null; animStart = now;
@@ -685,7 +687,7 @@ namespace LuckyPet
                 "• SỐ LẦN gõ phím / click (không ghi nội dung phím).\n" +
                 "• Tên tiến trình và tiêu đề cửa sổ đang mở (không chụp màn hình).\n" +
                 "• Mức pin, % CPU / RAM.\n" +
-                "• Sự kiện có file mới trong thư mục Downloads, sự kiện clipboard thay đổi (không đọc nội dung).\n\n" +
+                "\n" +
                 "Chỉ lưu số đếm / thời lượng trong " + Memory.Folder + ". Không gửi dữ liệu ra ngoài.\n\n" +
                 "Mặc định Lucky KHÔNG chặn chuột (click xuyên qua). Muốn chơi với Lucky: bấm Ctrl+Alt+I, rồi giữ Alt hoặc rê chuột giữ yên trên Lucky.\n" +
                 "Mọi tính năng bật/tắt được trong Cài đặt (chuột phải icon Lucky ở khay hệ thống).",
@@ -732,6 +734,7 @@ namespace LuckyPet
 
             var t = Tab(tabs, "Chung");
             Check(t, "Không làm phiền (tắt mọi nhắc, chỉ giữ thú idle)", () => s.Dnd, v => s.Dnd = v);
+            Check(t, "Lucky tự chơi khi bạn làm việc (bóng, chạy vòng, đuổi đuôi, bướm)", () => s.SelfPlay, v => s.SelfPlay = v);
             Check(t, "Âm thanh khi hết phiên Pomodoro", () => s.Sound, v => s.Sound = v);
             Note(t, "Kích thước thú và khởi động cùng Windows: chuột phải Lucky → Kích thước / Khởi động cùng Windows.");
 
@@ -766,7 +769,7 @@ namespace LuckyPet
 
             t = Tab(tabs, "Ngữ cảnh (F6)");
             Check(t, "Phản ứng theo ứng dụng đang dùng", () => s.F6, v => s.F6 = v);
-            Check(t, "Theo dõi tiêu đề terminal (error / passed)", () => s.BuildWatch, v => s.BuildWatch = v);
+            Check(t, "Đổi trang phục theo app (kính + laptop khi lập trình…)", () => s.WorkOutfit, v => s.WorkOutfit = v);
             Text_(t, "Giờ tổng kết ngày (HH:mm)", () => s.SummaryTime, v => s.SummaryTime = v);
             Note(t, "Nhóm ứng dụng: mỗi dòng nhom=tiến trình,…|từ khoá tiêu đề,…");
             var groups = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Width = D(470), Height = D(150), Font = new Font("Consolas", 8.5f) };
