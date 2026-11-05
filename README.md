@@ -1,6 +1,6 @@
-# Lucky 🐶: Husky puppy desktop pet for Windows
+# Lucky 🐶: Husky desktop pet for Windows
 
-A chubby little Husky puppy that lives on top of your Windows taskbar. Lucky walks, naps, fetches a ball, eats treats, cheers you on, keeps you company while you focus, and remembers you between sessions. The app is a single exe that keeps only the animations it is currently showing in memory (sheets are decoded on first use and dropped after 20 s unused), so it stays light on RAM and almost idle on CPU.
+A plush-looking Husky that lives on top of your Windows taskbar. Lucky walks, naps, fetches a ball, eats treats, cheers you on, keeps you company while you focus, and remembers you between sessions. The app is a single exe that keeps only the animations it is currently showing in memory (sheets are decoded on first use and dropped after 20 s unused), so it stays light on RAM and almost idle on CPU.
 
 ![Lucky's sprite sheet: walk, run, happy, sit, blink, sit-happy, sleep, eat](docs/sprites.png)
 
@@ -62,7 +62,7 @@ The art uses a cartoon **idle-game style**: bold ink outlines, flat two-tone cel
 - Surface normals drive a **two-band toon shader**. White fur gets a lighter shadow so it stays clean.
 - Every part gets an **ink line** along its inner edge. The silhouette gets a thicker ink outline plus a white sticker ring.
 - Subtle fluffy edges from value noise anchored to each part, so nothing swims between frames.
-- Puppy proportions (big round head, short snout, big low eyes, small rounded ears, chubby body and paws), Husky cap and goggle markings, eyes with highlights, and light ambient occlusion where parts overlap.
+- Husky cap and goggle markings, anime eyes with a lash line and highlights, and light ambient occlusion where parts overlap.
 - Rendered at 4×, then downsampled in premultiplied space.
 - A soft rim light on the edges that face the key light.
 

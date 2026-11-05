@@ -113,8 +113,6 @@ def vnoise(x, y, seed=0.0):
     return (a + (b - a) * u) + ((c + (d - c) * u) - (a + (b - a) * u)) * v
 
 
-PUPPY_HEAD = 1.22   # head scale vs. the adult design
-SN = 0.2            # how much shorter the snout is (in head radii)
 FLUFF = 0.25  # idle/cartoon style: clean shapes, only a hint of fluff
 
 
@@ -196,18 +194,17 @@ def mix(a, b, t):
 
 # ---------------------------------------------------------------- body parts
 def leg(cv, hx, hy, fx, fy, far):
-    d = sd_capsule(hx, hy, fx, fy - 2.5, 6.4, 5.8)
+    d = sd_capsule(hx, hy, fx, fy - 2.5, 5.6, 4.9)
     d = d + (fur_noise(hx, hy, 11) - 0.5) * 0.5
     white = soft_mask(-(Y - (hy + 7.5)) + (fur_noise(hx, hy, 12, 2) - 0.5) * 2.0, 1.2)
     base = mix(np.broadcast_to(FUR_M, (H, W, 3)), WHITE, white)
     if far:
         base = base * 0.8
     cv.part(d, base, 5.0, grain=fur_noise(hx, hy, 13, 2.2), ao=0.2)
-    dp = sd_ellipse(fx + 1.2, fy - 2.0, 7.0, 4.2)
+    dp = sd_ellipse(fx + 1.2, fy - 1.6, 6.4, 3.6)
     cv.part(dp, WHITE * (0.82 if far else 1.0), 3.0, gloss=0.05, ao=0.18)
     for k in (-1.6, 1.8):
-        cv.flat(sd_capsule(fx + 1.2 + k, fy - 2.9, fx + 1.2 + k, fy - 1.2, 0.3, 0.3), C(150, 160, 190), soft=1.2, alpha_mul=0.7)
-    cv.flat(sd_ellipse(fx + 1.2, fy - 0.9, 2.6, 0.9), C(255, 160, 190), soft=1.5, alpha_mul=0.8)
+        cv.flat(sd_capsule(fx + 1.2 + k, fy - 2.6, fx + 1.2 + k, fy - 0.8, 0.32, 0.32), C(130, 140, 170), soft=1.2, alpha_mul=0.8)
 
 
 def tail(cv, pts, w, wag_seed=0):
@@ -265,12 +262,11 @@ def eye(cv, ex, ey, e, mode, look=(0.0, 0.0)):
     a = np.clip(0.5 - d * R, 0, 1)
     cv.over(col, a)
     ox, oy = look[0] * e * 0.3, look[1] * e * 0.24
-    pr = e * (0.7 if mode in ('wide', 'sparkle') else 0.62)
+    pr = e * (0.62 if mode in ('wide', 'sparkle') else 0.5)
     cv.flat(np.maximum(sd_ellipse(ex + e * 0.06 + ox, ey + e * 0.1 + oy, pr, pr * 1.08), d), C(12, 16, 30))
     cv.flat(np.maximum(sd_polyline(arc_pts(ex + ox * 0.5, ey + e * 0.05 + oy * 0.5, e * 0.72, e * 0.8, 35, 145), 0.35), d), C(160, 255, 245), soft=1.3, alpha_mul=0.65)
     cv.flat(sd_ellipse(ex - e * 0.38 + ox * 0.6, ey - e * 0.44 + oy * 0.6, e * 0.36, e * 0.34), WHITE)
-    cv.flat(sd_ellipse(ex + e * 0.36 + ox * 0.6, ey + e * 0.36 + oy * 0.6, e * 0.17, e * 0.17), WHITE, alpha_mul=0.95)
-    cv.flat(sd_ellipse(ex + e * 0.1 + ox * 0.6, ey - e * 0.62 + oy * 0.6, e * 0.1, e * 0.1), WHITE, alpha_mul=0.85)
+    cv.flat(sd_ellipse(ex + e * 0.36 + ox * 0.6, ey + e * 0.36 + oy * 0.6, e * 0.15, e * 0.15), WHITE, alpha_mul=0.9)
     if mode == 'sparkle':
         sx_, sy_ = ex + e * 0.25 + ox, ey - e * 0.05 + oy
         cv.flat(np.minimum(sd_capsule(sx_ - e * 0.45, sy_, sx_ + e * 0.45, sy_, 0.28, 0.28), sd_capsule(sx_, sy_ - e * 0.45, sx_, sy_ + e * 0.45, 0.28, 0.28)), WHITE)
@@ -280,16 +276,16 @@ def eye(cv, ex, ey, e, mode, look=(0.0, 0.0)):
         cv.flat(sd_polyline([(ex - e * 1.08, ey - ry * 0.02), (ex + e * 1.12, ey - ry * 0.1)], 0.62), LINE, soft=1.0)
         return
     lid = arc_pts(ex, ey + e * 0.05, e * 1.08, e * 1.2, 196, 344)
+    lid.append((ex + e * 1.32, ey - e * 0.62))
     cv.flat(sd_polyline(lid, 0.62), LINE, soft=1.0)
 
 
 def head(cv, cx, cy, r, eyes='open', mouth='neutral', ears_back=0.0, tilt=0.0, look=(0.0, 0.0), brows=None, glasses=False, headset=False):
-    r = r * PUPPY_HEAD
     eb = ears_back
-    # ears (small, rounded puppy ears)
-    for far, (p0, p1, p2) in ((True, ((cx - r * 0.95, cy - r * 0.3), (cx - r * 0.72 - eb * 4, cy - r * 1.22 + eb * 6), (cx - r * 0.18, cy - r * 0.86))),
-                              (False, ((cx + r * 0.08, cy - r * 0.9), (cx + r * 0.55 - eb * 5, cy - r * 1.26 + eb * 6), (cx + r * 0.92, cy - r * 0.38)))):
-        d = sd_tri(p0, p1, p2) - 3.4
+    # ears
+    for far, (p0, p1, p2) in ((True, ((cx - r * 0.92, cy - r * 0.2), (cx - r * 0.66 - eb * 4, cy - r * 1.46 + eb * 6), (cx - r * 0.06, cy - r * 0.8))),
+                              (False, ((cx + 0.0, cy - r * 0.88), (cx + r * 0.5 - eb * 5, cy - r * 1.52 + eb * 6), (cx + r * 0.9, cy - r * 0.3)))):
+        d = sd_tri(p0, p1, p2) - 2.2
         base = mix(np.broadcast_to(FUR_M, (H, W, 3)), FUR_D, 0.55)
         cv.part(d, base * (0.88 if far else 1.0), 4.5, grain=fur_noise(p1[0], p1[1], 31, 2), ao=0.15)
         gx_, gy_ = (p0[0] + p1[0] + p2[0]) / 3, (p0[1] + p1[1] + p2[1]) / 3 + 2
@@ -300,54 +296,54 @@ def head(cv, cx, cy, r, eyes='open', mouth='neutral', ears_back=0.0, tilt=0.0, l
         fl = soft_mask(sd_ellipse(gx_, gy_ + 5, 4.5, 3.2) + (fur_noise(gx_, gy_, 34, 3.5) - 0.5) * 3.2, 1.0)
         cv.over(np.broadcast_to(WHITE, (H, W, 3)), fl * np.clip(0.5 - di * R, 0, 1) * 0.9)
     # head base with fluffy cheeks
-    d = sd_ellipse(cx, cy, r * 1.04, r * 0.97)
+    d = sd_ellipse(cx, cy, r * 1.02, r * 0.93)
     d = smin(d, sd_ellipse(cx - r * 0.8, cy + r * 0.36, r * 0.36, r * 0.3), 3)
     d = smin(d, sd_ellipse(cx + r * 0.6, cy + r * 0.44, r * 0.32, r * 0.28), 3)
     fluff = np.clip((Y - cy) / r, 0, 1) * 1.5 + 0.25
     d = d + (fur_noise(cx, cy, 41, 1.6) - 0.5) * fluff * 0.75
     white = sd_ellipse(cx, cy + r * 0.52, r * 0.98, r * 0.56)
-    white = np.minimum(white, sd_ellipse(cx - r * 0.38, cy + r * 0.05, r * 0.39, r * 0.37))
-    white = np.minimum(white, sd_ellipse(cx + r * 0.31, cy + r * 0.03, r * 0.36, r * 0.34))
-    white = np.minimum(white, sd_ellipse(cx - r * 0.03, cy - r * 0.42, r * 0.08, r * 0.36))
+    white = np.minimum(white, sd_ellipse(cx - r * 0.38, cy - r * 0.06, r * 0.31, r * 0.29))
+    white = np.minimum(white, sd_ellipse(cx + r * 0.37, cy - r * 0.08, r * 0.29, r * 0.27))
+    white = np.minimum(white, sd_ellipse(cx - r * 0.02, cy - r * 0.42, r * 0.085, r * 0.44))
     wm = soft_mask(white + (fur_noise(cx, cy, 42, 2.2) - 0.5) * 1.6, 0.9)
     cap = np.clip((cy - Y) / r * 1.3 + 0.35, 0, 1)
     base = mix(mix(np.broadcast_to(FUR_M, (H, W, 3)), FUR_D, cap * 0.75), WHITE, wm)
     cv.part(d, base, r * 0.75, gloss=0.05, grain=fur_noise(cx, cy, 43, 2.6), ao=0.3)
     # blush
-    cv.flat(sd_ellipse(cx - r * 0.62, cy + r * 0.38, r * 0.22, r * 0.12), C(255, 140, 180), soft=6, alpha_mul=0.75)
-    cv.flat(sd_ellipse(cx + r * 0.12, cy + r * 0.4, r * 0.16, r * 0.09), C(255, 140, 180), soft=6, alpha_mul=0.65)
+    cv.flat(sd_ellipse(cx - r * 0.66, cy + r * 0.3, r * 0.2, r * 0.1), C(255, 150, 185), soft=6, alpha_mul=0.55)
+    cv.flat(sd_ellipse(cx + r * 0.16, cy + r * 0.32, r * 0.15, r * 0.08), C(255, 150, 185), soft=6, alpha_mul=0.45)
     # muzzle
-    cv.part(sd_ellipse(cx + r * (0.8 - SN), cy + r * (0.42 + 0.06), r * 0.38, r * 0.27), WHITE, r * 0.3, gloss=0.08, ao=0.22)
+    cv.part(sd_ellipse(cx + r * 0.8, cy + r * 0.36, r * 0.44, r * 0.3), WHITE, r * 0.3, gloss=0.08, ao=0.22)
     for k in range(3):
-        cv.flat(sd_ellipse(cx + r * ((0.66 - SN) + k * 0.1), cy + r * ((0.45 + 0.06) - k * 0.03), 0.35, 0.35), C(140, 150, 180), alpha_mul=0.8)
+        cv.flat(sd_ellipse(cx + r * (0.66 + k * 0.1), cy + r * (0.45 - k * 0.03), 0.35, 0.35), C(140, 150, 180), alpha_mul=0.8)
     # nose
-    cv.part(sd_ellipse(cx + r * (1.15 - SN), cy + r * (0.22 + 0.06), r * 0.17, r * 0.125), NOSE, r * 0.12, gloss=0.8, shin=45, ao=0.15, rim=0.1)
+    cv.part(sd_ellipse(cx + r * 1.09, cy + r * 0.27, r * 0.16, r * 0.12), NOSE, r * 0.12, gloss=0.8, shin=45, ao=0.15, rim=0.1)
     # mouth
-    nose_line = sd_polyline([(cx + r * (1.13 - SN), cy + r * (0.33 + 0.06)), (cx + r * (1.09 - SN), cy + r * (0.43 + 0.06))], 0.45)
+    nose_line = sd_polyline([(cx + r * 1.08, cy + r * 0.37), (cx + r * 1.07, cy + r * 0.44)], 0.45)
     if mouth == 'neutral':
-        cv.flat(sd_polyline([(cx + r * (1.13 - SN), cy + r * (0.33 + 0.06)), (cx + r * (1.09 - SN), cy + r * (0.45 + 0.06))], 0.45), LINE, soft=1.1)
-        cv.flat(sd_polyline(arc_pts(cx + r * (1.0 - SN), cy + r * (0.43 + 0.06), r * 0.09, r * 0.08, 0, 180, 8), 0.45), LINE, soft=1.1)
-        cv.flat(sd_polyline(arc_pts(cx + r * (1.18 - SN), cy + r * (0.43 + 0.06), r * 0.09, r * 0.08, 0, 180, 8), 0.45), LINE, soft=1.1)
+        cv.flat(sd_polyline([(cx + r * 1.08, cy + r * 0.37), (cx + r * 1.07, cy + r * 0.46)], 0.45), LINE, soft=1.1)
+        cv.flat(sd_polyline(arc_pts(cx + r * 1.0, cy + r * 0.43, r * 0.09, r * 0.08, 0, 180, 8), 0.45), LINE, soft=1.1)
+        cv.flat(sd_polyline(arc_pts(cx + r * 1.18, cy + r * 0.43, r * 0.09, r * 0.08, 0, 180, 8), 0.45), LINE, soft=1.1)
     elif mouth == 'worry':
         cv.flat(nose_line, LINE, soft=1.1)
-        cv.flat(sd_polyline([(cx + r * (0.9 - SN), cy + r * (0.52 + 0.06)), (cx + r * (0.98 - SN), cy + r * (0.47 + 0.06)), (cx + r * (1.06 - SN), cy + r * (0.52 + 0.06)),
-                             (cx + r * (1.14 - SN), cy + r * (0.47 + 0.06)), (cx + r * (1.22 - SN), cy + r * (0.52 + 0.06))], 0.42), LINE, soft=1.1)
+        cv.flat(sd_polyline([(cx + r * 0.9, cy + r * 0.52), (cx + r * 0.98, cy + r * 0.47), (cx + r * 1.06, cy + r * 0.52),
+                             (cx + r * 1.14, cy + r * 0.47), (cx + r * 1.22, cy + r * 0.52)], 0.42), LINE, soft=1.1)
     elif mouth == 'o':
         cv.flat(nose_line, LINE, soft=1.1)
-        cv.part(sd_ellipse(cx + r * (1.05 - SN), cy + r * (0.55 + 0.06), r * 0.09, r * 0.11), MOUTH, 1.2, ao=0.1, rim=0)
+        cv.part(sd_ellipse(cx + r * 1.05, cy + r * 0.55, r * 0.09, r * 0.11), MOUTH, 1.2, ao=0.1, rim=0)
     elif mouth == 'yawn':
         cv.flat(nose_line, LINE, soft=1.1)
-        cv.part(sd_ellipse(cx + r * (1.0 - SN), cy + r * (0.62 + 0.06), r * 0.22, r * 0.3), MOUTH, 1.8, ao=0.12, rim=0)
-        cv.part(sd_ellipse(cx + r * (1.0 - SN), cy + r * (0.8 + 0.06), r * 0.14, r * 0.08), TONGUE, 1.0, gloss=0.3, ao=0)
+        cv.part(sd_ellipse(cx + r * 1.0, cy + r * 0.62, r * 0.22, r * 0.3), MOUTH, 1.8, ao=0.12, rim=0)
+        cv.part(sd_ellipse(cx + r * 1.0, cy + r * 0.8, r * 0.14, r * 0.08), TONGUE, 1.0, gloss=0.3, ao=0)
     else:
         open_ = {'open': 1.0, 'pant': 1.0, 'chew1': 0.55, 'talk': 0.6}.get(mouth, 0.2)
         cv.flat(nose_line, LINE, soft=1.1)
-        cv.part(sd_ellipse(cx + r * (1.02 - SN), cy + r * (0.52 + 0.06), r * 0.2, r * 0.15 * open_ + 0.6), MOUTH, 1.5, ao=0.1, rim=0)
+        cv.part(sd_ellipse(cx + r * 1.02, cy + r * 0.52, r * 0.2, r * 0.15 * open_ + 0.6), MOUTH, 1.5, ao=0.1, rim=0)
         if mouth in ('open', 'pant'):
-            cv.part(sd_ellipse(cx + r * (1.03 - SN), cy + r * (0.68 + 0.06), r * 0.135, r * 0.2), TONGUE, r * 0.12, gloss=0.35, shin=25, ao=0.12)
-            cv.flat(sd_capsule(cx + r * (1.03 - SN), cy + r * (0.6 + 0.06), cx + r * (1.03 - SN), cy + r * (0.78 + 0.06), 0.3, 0.2), C(200, 80, 110), alpha_mul=0.7)
+            cv.part(sd_ellipse(cx + r * 1.03, cy + r * 0.68, r * 0.135, r * 0.2), TONGUE, r * 0.12, gloss=0.35, shin=25, ao=0.12)
+            cv.flat(sd_capsule(cx + r * 1.03, cy + r * 0.6, cx + r * 1.03, cy + r * 0.78, 0.3, 0.2), C(200, 80, 110), alpha_mul=0.7)
     # eyes
-    eyes_xy = ((cx - r * 0.38, cy + r * 0.06, r * 0.29, 1), (cx + r * 0.3, cy + r * 0.04, r * 0.265, -1))
+    eyes_xy = ((cx - r * 0.38, cy - r * 0.06, r * 0.21, 1), (cx + r * 0.36, cy - r * 0.08, r * 0.195, -1))
     for ex, ey, e, _ in eyes_xy:
         eye(cv, ex, ey, e, eyes, look)
     if brows == 'worried':
@@ -370,12 +366,12 @@ def head(cv, cx, cy, r, eyes='open', mouth='neutral', ears_back=0.0, tilt=0.0, l
 
 
 def body(cv, cx, cy, bob=0.0, breath=0.0):
-    d = sd_ellipse(cx + 2, cy + 2 - bob, 26, 17 + breath)
-    d = smin(d, sd_ellipse(cx + 20, cy - 1 - bob, 14, 15), 6)
-    d = smin(d, sd_ellipse(cx - 17, cy + 2 - bob, 13.5, 15), 6)
+    d = sd_ellipse(cx, cy - bob, 30, 15.5 + breath)
+    d = smin(d, sd_ellipse(cx + 22, cy - 3 - bob, 13, 14), 6)
+    d = smin(d, sd_ellipse(cx - 22, cy - bob, 13, 14.5), 6)
     d = d + (fur_noise(cx, cy, 51, 1.5) - 0.5) * 0.7
     saddle = np.clip(((cy - bob) - Y) / 9 + 0.2, 0, 1)
-    belly = soft_mask(sd_ellipse(cx + 3, cy + 12 - bob, 22, 9) + (fur_noise(cx, cy, 52, 2) - 0.5) * 2.2, 1.0)
+    belly = soft_mask(sd_ellipse(cx + 2, cy + 10 - bob, 25, 8.5) + (fur_noise(cx, cy, 52, 2) - 0.5) * 2.2, 1.0)
     chest = soft_mask(sd_ellipse(cx + 25, cy + 2 - bob, 9, 12) + (fur_noise(cx, cy, 53, 2) - 0.5) * 2.2, 1.0)
     base = mix(mix(np.broadcast_to(FUR_M, (H, W, 3)), FUR_D, saddle * 0.85), WHITE, np.maximum(belly, chest))
     cv.part(d, base, 13, grain=fur_noise(cx, cy, 54, 2.2), ao=0.3)
@@ -392,20 +388,20 @@ def pose_stand(phase=0.0, run=False, eyes='open', mouth='neutral', wag=0.0, bob_
     s = math.sin(phase * 2 * math.pi)
     amp = 6.5 if run else 4.0
     bob = abs(s) * bob_amp
-    tail(cv, [(40, 92 - bob), (24, 88), (20 + wag * 0.4, 68 + wag), (33 + wag * 0.3, 65 + wag * 0.5)], 15)
-    leg(cv, 42, 97 - bob, 42 + s * amp, 116, True)
-    leg(cv, 76, 97 - bob, 76 - s * amp, 116, True)
-    body(cv, 60, 94, bob)
-    leg(cv, 51, 97 - bob, 51 - s * amp, 116, False)
-    leg(cv, 86, 97 - bob, 86 + s * amp, 116, False)
+    tail(cv, [(34, 86 - bob), (14, 80), (10 + wag * 0.4, 50 + wag), (30 + wag * 0.3, 50 + wag * 0.5)], 13)
+    leg(cv, 40, 93 - bob, 40 + s * amp, 116, True)
+    leg(cv, 78, 93 - bob, 78 - s * amp, 116, True)
+    body(cv, 60, 90, bob)
+    leg(cv, 50, 93 - bob, 50 - s * amp, 116, False)
+    leg(cv, 88, 93 - bob, 88 + s * amp, 116, False)
     if eat:
         ruff(cv, 86, 86 - bob, 11, 12)
         collar(cv, 88, 85 - bob, 10, 4.2)
         head(cv, 95, 90 - bob, 20, eyes='happy', mouth=chew, tilt=0.3)
     else:
-        ruff(cv, 85, 88 - bob, 11, 13)
-        collar(cv, 87, 83 - bob, 11, 4.4)
-        head(cv, 92, 59 - bob, 23, eyes=eyes, mouth=mouth, ears_back=0.5 if run else 0.0, look=look)
+        ruff(cv, 85, 84 - bob, 11, 13)
+        collar(cv, 87, 79 - bob, 11, 4.4)
+        head(cv, 92, 56 - bob, 23, eyes=eyes, mouth=mouth, ears_back=0.5 if run else 0.0, look=look)
     for f in extra:
         f(cv, bob)
     return cv
@@ -413,10 +409,10 @@ def pose_stand(phase=0.0, run=False, eyes='open', mouth='neutral', wag=0.0, bob_
 
 def pose_sit(wag=0.0, eyes='open', mouth='neutral', breath=0.0):
     cv = Canvas()
-    tail(cv, [(48, 108), (30, 116), (22 + wag, 102), (30 + wag, 90)], 15)
+    tail(cv, [(46, 108), (24, 116), (14 + wag, 100), (24 + wag, 86)], 13)
     d = sd_ellipse(47, 104, 15, 10.5) + (fur_noise(47, 104, 71, 1.6) - 0.5) * 0.9
     cv.part(d, FUR_M * 0.86, 9, grain=fur_noise(47, 104, 72, 2.2), ao=0.25)
-    d = sd_ellipse(64, 94 - breath * 0.3, 23, 21 + breath) + (fur_noise(64, 91, 73, 1.5) - 0.5) * 0.9
+    d = sd_ellipse(64, 91 - breath * 0.3, 21, 23 + breath) + (fur_noise(64, 91, 73, 1.5) - 0.5) * 0.9
     chest = soft_mask(sd_ellipse(68, 92, 12, 19) + (fur_noise(64, 91, 74, 2) - 0.5) * 2.4, 1.0)
     side = np.clip((60 - X) / 14, 0, 1)
     base = mix(mix(np.broadcast_to(FUR_M, (H, W, 3)), FUR_D, side * 0.8), WHITE, chest)
