@@ -187,6 +187,14 @@ namespace LuckyPet
         }
         protected override bool ShowWithoutActivation { get { return true; } }
 
+        [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+        // Other apps (and the taskbar) can push a topmost window down the z-order; put it back on top.
+        // NOMOVE | NOSIZE | NOACTIVATE | NOOWNERZORDER, so it never steals focus.
+        public void KeepOnTop()
+        {
+            if (IsHandleCreated && Visible) SetWindowPos(Handle, (IntPtr)(-1), 0, 0, 0, 0, 0x2 | 0x1 | 0x10 | 0x200);
+        }
+
         public void Push(Bitmap bmp, int x, int y)
         {
             IntPtr screenDc = GetDC(IntPtr.Zero), memDc = CreateCompatibleDC(screenDc);
@@ -680,6 +688,7 @@ namespace LuckyPet
             if (++fsCheck >= 25)
             {
                 fsCheck = 0;
+                if (!hiddenFs && !userHidden) { KeepOnTop(); if (ballActive) ballWin.KeepOnTop(); if (boneActive) boneWin.KeepOnTop(); bubbleWin.KeepOnTop(); }
                 bool fs = IsFullscreenApp();
                 if (fs && !hiddenFs) { hiddenFs = true; Hide(); ballWin.Hide(); boneWin.Hide(); bubbleWin.Hide(); }
                 else if (!fs && hiddenFs) { hiddenFs = false; if (!userHidden) { Show(); if (ballActive && !ballCarried) ballWin.Show(); if (boneActive) boneWin.Show(); } }

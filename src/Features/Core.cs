@@ -365,8 +365,8 @@ namespace LuckyPet
 
         // ---------------------------------------------------------- transitions, eye tracking, crossfade
         string shownAnim, transAnim; int transStart, fadeStart; Bitmap fadeFrom, lastFrame;
-        static readonly HashSet<string> StandAnims = new HashSet<string> { "walk", "run", "happy", "eat", "dodge", "context_download", "battery_charged" };
-        static readonly HashSet<string> LieAnims = new HashSet<string> { "sleep", "focus_break", "battery_critical" };
+        static readonly HashSet<string> StandAnims = new HashSet<string> { "walk", "run", "happy", "eat", "dodge", "battery_charged" };
+        static readonly HashSet<string> LieAnims = new HashSet<string> { "sleep", "focus_break", "battery_critical", "focus_working" };
         static string Cat(string a) { return StandAnims.Contains(a) ? "stand" : LieAnims.Contains(a) ? "lie" : "sit"; }
 
         string PresentAnim(string anim, ref int fps, out int idx)
@@ -769,7 +769,7 @@ namespace LuckyPet
 
             t = Tab(tabs, "Ngữ cảnh (F6)");
             Check(t, "Phản ứng theo ứng dụng đang dùng", () => s.F6, v => s.F6 = v);
-            Check(t, "Đổi trang phục theo app (kính + laptop khi lập trình…)", () => s.WorkOutfit, v => s.WorkOutfit = v);
+            Check(t, "Đổi dáng theo app (xem phim → bỏng ngô)", () => s.WorkOutfit, v => s.WorkOutfit = v);
             Text_(t, "Giờ tổng kết ngày (HH:mm)", () => s.SummaryTime, v => s.SummaryTime = v);
             Note(t, "Nhóm ứng dụng: mỗi dòng nhom=tiến trình,…|từ khoá tiêu đề,…");
             var groups = new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, Width = D(470), Height = D(150), Font = new Font("Consolas", 8.5f) };

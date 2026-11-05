@@ -1,6 +1,6 @@
-# Lucky 🐶: Husky desktop pet for Windows
+# Lucky 🐶: Husky puppy desktop pet for Windows
 
-A plush-looking Husky that lives on top of your Windows taskbar. Lucky walks, naps, fetches a ball, eats treats, cheers you on, keeps you company while you focus, and remembers you between sessions. The app is a single exe that keeps only the animations it is currently showing in memory (sheets are decoded on first use and dropped after 20 s unused), so it stays light on RAM and almost idle on CPU.
+A chubby little Husky puppy that lives on top of your Windows taskbar. Lucky walks, naps, fetches a ball, eats treats, cheers you on, keeps you company while you focus, and remembers you between sessions. The app is a single exe that keeps only the animations it is currently showing in memory (sheets are decoded on first use and dropped after 20 s unused), so it stays light on RAM and almost idle on CPU.
 
 ![Lucky's sprite sheet: walk, run, happy, sit, blink, sit-happy, sleep, eat](docs/sprites.png)
 
@@ -29,15 +29,15 @@ Each feature lives in its own file under `src/Features/` and can be turned on or
 | | What it does |
 |---|---|
 | **F1 Breaks** | Counts *continuous* activity time. Being away for more than 5 min resets it. Reminders: 20-20-20 eyes (20 min), water (60 min), stretch (50 min). Lucky runs to the corner and plays the matching animation, with **Xong rồi / Hoãn 10 phút / Bỏ qua** buttons. Reminders are skipped during meetings and full-screen apps, and during a Pomodoro they wait for the break. Done/skipped counts are kept per day |
-| **F3 Pomodoro** | 25 / 5 min with a 15-min long break every 4 sessions (all adjustable). Start from the tray, the right-click menu or **Ctrl+Alt+P**. Lucky types on a mini laptop with a progress ring next to it and stays quiet. At the end it celebrates with confetti, an optional sound, then the break. It shakes its head once if you open something on your distraction list. Sessions are counted per day and per week |
+| **F3 Pomodoro** | 25 / 5 min with a 15-min long break every 4 sessions (all adjustable). Start from the tray, the right-click menu or **Ctrl+Alt+P**. Lucky lies down and relaxes next to a progress ring and stays quiet (it never works alongside you). At the end it celebrates with confetti, an optional sound, then the break. It shakes its head once if you open something on your distraction list. Sessions are counted per day and per week |
 | **F4 Battery / overload** | On battery only: at 20 % or less Lucky gets *hungry*, at 10 % or less it lies down (repeats at most every 5 min), and when you plug in it jumps for joy. When CPU or RAM stays above 90 % for 60 s, Lucky sweats and fans itself. The bubble button shows the top 3 processes (display only, nothing is killed). Thresholds and cooldown are adjustable |
 | **F5 Activity** | Counts keys and clicks only, never their content. Typing ≥ 200 keys/min for 10 s triggers a cheer. After 3 min idle it yawns, after 10 min it sleeps, and it wakes and waves when you return. ≥ 8 clicks in 2 s startles it, and Ctrl+S makes it nod "saved". Its head and eyes follow the cursor within about 220–300 px |
-| **F6 Work context** | Reads the foreground process name and window title every 2 s. Groups (editable, outfits are off by default and can be turned on in Settings): code (glasses + laptop), docs (pen + notepad), sheet (calculator), email (letter), meeting (headset, moves to the corner, silences reminders), design (brush), fun (popcorn, hidden during Pomodoro). Switches have a 20-s cooldown. The outfit is shown for 25 s after you switch app group and then for 25 s every 4 min, so Lucky still plays normally in between (meetings keep it in the corner the whole time). While Lucky sleeps, only alerts, breaks and focus can wake it. Lucky praises 45 min on one app and shows a day summary at 17:30 |
+| **F6 Work context** | Reads the foreground process name and window title every 2 s. Groups (editable): code, docs, sheet, email, design are only counted for the day summary; Lucky does not work along with you. Meeting puts on a headset, moves Lucky to the corner and silences reminders. Fun (popcorn) is optional in Settings and hidden during Pomodoro. While Lucky sleeps, only alerts, breaks and focus can wake it. Lucky praises 45 min on one app and shows a day summary at 17:30 |
 | **F7 Click guard** | Lucky is **click-through by default** (`WS_EX_TRANSPARENT`). Toggle interaction with **Ctrl+Alt+I**, the tray switch (✓, plus a green dot on the icon) or Settings. Once enabled, hold **Alt** or hover still for 800 ms (a progress ring fills) to activate: Lucky glows and the cursor becomes a hand. Lucky dodges a cursor rushing at it, stays clear of caption buttons and the text caret, and fades to 30 % while you drag windows or scroll. Bubble buttons only accept clicks 500 ms after they appear. Dragging needs more than 10 px. *Khoá thú* locks it in place, and interaction turns itself off after 5 idle minutes. The chosen mode is remembered |
 
 Tray menu: Bật tương tác thú · Tạm ẩn thú (15 phút / 1 giờ / đến khi bật lại) · Không làm phiền · Pomodoro · Thống kê hôm nay · Cài đặt. On first run, a short intro explains exactly what is read. Data stays in `%APPDATA%\LuckyPet` (`settings.txt`, `stats.txt`, `memory.txt`) and nothing is sent anywhere.
 
-All feature animations (`art/actions.py`) use the same SDF toon renderer, palette, outline, 130×120 frame and 2× storage. Props such as the glass, laptop, notepad, calculator, letter, headset, brush, popcorn and summary board are drawn as part of the sprite.
+All feature animations (`art/actions.py`) use the same SDF toon renderer, palette, outline, 130×120 frame and 2× storage. Props such as the glass, headset, popcorn and summary board are drawn as part of the sprite.
 
 **Paused (not implemented yet):** F2 calendar alerts (needs Google/Microsoft OAuth) and its `meeting_alert / meeting_urgent / meeting_quiet` animations. Scrolling is detected through the mouse wheel only, not through scrollbar dragging.
 
@@ -62,7 +62,7 @@ The art uses a cartoon **idle-game style**: bold ink outlines, flat two-tone cel
 - Surface normals drive a **two-band toon shader**. White fur gets a lighter shadow so it stays clean.
 - Every part gets an **ink line** along its inner edge. The silhouette gets a thicker ink outline plus a white sticker ring.
 - Subtle fluffy edges from value noise anchored to each part, so nothing swims between frames.
-- Husky cap and goggle markings, anime eyes with a lash line and highlights, and light ambient occlusion where parts overlap.
+- Puppy proportions (big round head, short snout, big low eyes, small rounded ears, chubby body and paws), Husky cap and goggle markings, eyes with highlights, and light ambient occlusion where parts overlap.
 - Rendered at 4×, then downsampled in premultiplied space.
 - A soft rim light on the edges that face the key light.
 

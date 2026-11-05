@@ -422,11 +422,11 @@ def _(i):
 
 
 # ---------------- F3 focus
-@anim('focus_working', 8, 8, True)
+@anim('focus_working', 8, 4, True)
 def _(i):
-    up = i % 2
-    return pose_act(head_kw=dict(look=(0.55, 0.8)), arms=((70, 106 - (0 if up else 2)), (86, 106 - (2 if up else 0))),
-                    back=[lambda cv, i=i: laptop(cv, 80, 108, i / 8)], hdy=0.6 + (0.3 if up else 0))
+    # Pomodoro companion: Lucky just lies down and relaxes next to you (no working!)
+    return pose_lie(eyes='blink' if i == 5 else 'happy' if i in (2, 3) else 'open', mouth='neutral',
+                    breath=math.sin(P(i, 8) * TAU) * 0.8, wag=math.sin(P(i, 8) * TAU) * 3, ears_back=0.15)
 
 
 @anim('focus_done', 12, 8, False)
@@ -525,52 +525,10 @@ def _(i):
 
 
 # ---------------- F6 work context
-@anim('context_code', 8, 8, True)
-def _(i):
-    up = i % 2
-    return pose_act(head_kw=dict(look=(0.55, 0.8), glasses=True), arms=((70, 106 - (0 if up else 2)), (86, 106 - (2 if up else 0))),
-                    back=[lambda cv, i=i: laptop(cv, 80, 108, i / 8, dark=True)], hdy=0.6)
-
-
-@anim('context_docs', 8, 6, True)
-def _(i):
-    k = i % 4
-    tx, ty = rot(64, 98, -0.15, -5 + k * 3, -6 + (i // 2) * 3.2)
-    ang = -1.05
-    return pose_act(head_kw=dict(look=(0.2, 0.9)), arms=((56, 102), (tx + math.cos(ang) * 6.5, ty + math.sin(ang) * 6.5)),
-                    back=[lambda cv, i=i: notepad(cv, 64, 98, -0.15, 1 + i // 2)],
-                    mid=[lambda cv, tx=tx, ty=ty: pen(cv, tx, ty, ang)], hdy=0.8)
-
-
-@anim('context_sheet', 8, 8, True)
-def _(i):
-    pressed = [0, 4, 2, 7, 5, 1, 8, 3][i]
-    bx, by = rot(64, 98, -0.1, -4 + (pressed % 3) * 4, -0.6 + (pressed // 3) * 3.6)
-    return pose_act(head_kw=dict(look=(0.0, 0.9)), arms=((56, 104), (bx + 3.5, by - 3.5 if i % 2 else by - 5.5)),
-                    back=[lambda cv, p=pressed: calculator(cv, 64, 98, -0.1, p)], hdy=0.8)
-
-
-@anim('context_email', 8, 5, True)
-def _(i):
-    look = (-0.4 + (i % 4) * 0.3, 0.7)
-    return pose_act(head_kw=dict(look=look), arms=((62, 92), (84, 92)), hdy=0.6 + (i % 2) * 0.4,
-                    back=[lambda cv: envelope(cv, 73, 102), lambda cv: letter(cv, 73, 90, 0.04 * math.sin(i), 4),
-                          lambda cv: envelope_front(cv, 73, 102)])
-
-
 @anim('context_meeting', 6, 4, True)
 def _(i):
     return pose_act(head_kw=dict(headset=True, mouth='neutral' if i % 3 else 'talk'), hdy=[0, 0, 1.5, 1.5, 0, 0][i],
                     wag=math.sin(P(i, 6) * TAU) * 2)
-
-
-@anim('context_design', 8, 6, True)
-def _(i):
-    tx, ty = 66 + math.sin(P(i, 4) * TAU) * 3, 90 + (i % 4) * 1.6
-    ang = -0.6
-    return pose_act(head_kw=dict(look=(-0.4, 0.6)), arms=((52, 98), (tx + math.cos(ang) * 7, ty + math.sin(ang) * 7)),
-                    back=[lambda cv, i=i: canvas_board(cv, 58, 92, 1 + i // 2)],
-                    mid=[lambda cv, tx=tx, ty=ty: brush(cv, tx, ty, ang, [PINK, AQUA, BLUE, YELLOW][(i // 2) % 4])], hdy=0.4)
 
 
 @anim('context_fun', 8, 6, True)
